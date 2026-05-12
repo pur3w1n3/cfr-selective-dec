@@ -1,0 +1,16 @@
+build/
+dist/
+out/
+*.log
+*.tmp
+*.class
+*.jar
+*.war
+!.gitkeep
+
+.idea/
+.vscode/
+*.iml
+
+Thumbs.db
+Desktop.ini
