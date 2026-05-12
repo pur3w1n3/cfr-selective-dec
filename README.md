@@ -1,12 +1,11 @@
 # cfr-selective-dec
 
-基于 [CFR](https://www.benf.org/other/cfr/) 的批量反编译工具，用于本地代码审计。
-
-它适合在审计大型 `jar`、`war` 或 Spring Boot fat jar 时，只反编译指定包名下的业务代码，避免把 `WEB-INF/lib`、`BOOT-INF/lib` 里的大量第三方组件源码一起反编译出来。
+基于 CFR 的批量反编译工具，用于本地代码审计。它会先按包名前缀筛选 class，再生成临时过滤 jar 交给内置 CFR 反编译，避免把大型应用里的全部依赖源码一次性展开。
 
 ## 功能
 
-- 支持输入 `.jar` 和 `.war`。
+- 支持输入单个 `.jar`、`.war`。
+- 支持输入目录，并递归扫描目录里的 `.jar`、`.war` 和 `.class`。
 - 支持一个或多个包名前缀，例如 `com.foo,org.bar`。
 - WAR 会按层处理：
   - `WEB-INF/classes`
@@ -14,29 +13,40 @@
 - Spring Boot fat jar 会按层处理：
   - `BOOT-INF/classes`
   - `BOOT-INF/lib/*.jar`
-- 遇到嵌套 `jar/war` 会逐级抽取、逐级筛选、逐级反编译，避免把 jar 嵌套 jar 的结构直接丢给 CFR。
-- 先按包名筛选 class，再生成临时过滤 jar，最后调用内置 CFR 反编译。
-- CFR 源码已内置在 `third_party/cfr`，构建后是单文件可运行 jar。
-- 输出 Java 8 兼容字节码。
-- 默认传给 CFR：`--hideutf false --outputencoding UTF-8`，尽量避免中文字符串被输出成 `\uXXXX`，并使用 UTF-8 保存源码。
+- 遇到嵌套 `jar/war` 会逐级抽取、逐级筛选、逐级反编译。
+- 默认传给 CFR：`--hideutf false --outputencoding UTF-8`。
+- 可通过 `--output-encoding GB18030` 等参数改变 `.java` 输出编码。
+
+## 安全加固
+
+工具会处理不可信的 jar/war，因此做了以下防护：
+
+- 不把压缩包内容直接解压到输出目录，只复制匹配 class 或嵌套归档到随机临时目录。
+- 校验压缩包 entry name，拒绝绝对路径、盘符路径、空路径、`.`、`..`、空路径段和 NUL 字符，避免 Zip Slip。
+- 临时过滤 jar 中的 entry name 也会再次校验。
+- 默认异常只打印简要错误，使用 `--debug` 才打印完整堆栈。
+- 复制使用固定缓冲区流式处理，不把大文件整体读入内存。
+
+说明：当前不设置固定的项目规模上限，避免误伤大型项目。只要磁盘和 CPU 能承受，就会继续处理。
 
 ## 项目结构
 
 ```text
-.
-├── src/main/java/com/aq/cfrselect/Main.java
-├── third_party/cfr/src/          # 内置 CFR 源码
-├── third_party/cfr/LICENSE       # CFR MIT License
-├── third_party/cfr/README-CFR.md
-├── build.bat
-├── build-standalone.bat
-├── run.bat
-├── clean.bat
-├── THIRD_PARTY_NOTICES.md
-└── README.md
+src/main/java/com/aq/cfrselect/
+  Main.java                         # 程序入口
+  archive/ArchiveNames.java         # 归档命名、entry name 校验
+  cli/CliOptions.java               # 命令行参数解析
+  cli/UsagePrinter.java             # 中英文帮助
+  cli/UsageException.java           # 参数错误
+  core/SelectiveDecompiler.java     # 扫描、筛选、调用 CFR
+  io/IoUtils.java                   # 流复制、临时目录清理
+  matching/PackageMatcher.java      # 包名前缀匹配
+  model/ClassFileMatch.java         # class 匹配结果
+  model/FilterResult.java           # 临时过滤 jar 结果
+third_party/cfr/src/                # 内置 CFR 源码
 ```
 
-以下目录是构建产物，默认不会提交到 git：
+构建产物目录：
 
 ```text
 build/
@@ -72,12 +82,26 @@ dist\cfr-selective-dec.jar
 ```bat
 java -jar dist\cfr-selective-dec-standalone.jar app.war out com.example
 java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example,org.demo
+java -jar dist\cfr-selective-dec-standalone.jar app-dir out com.example
 ```
 
 命名参数：
 
 ```bat
 java -jar dist\cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example,org.demo
+java -jar dist\cfr-selective-dec-standalone.jar --input app-dir --output out --packages com.example
+```
+
+指定输出编码：
+
+```bat
+java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example --output-encoding GB18030
+```
+
+打印完整异常堆栈：
+
+```bat
+java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example --debug
 ```
 
 使用运行脚本：
@@ -89,12 +113,15 @@ run.bat app.war out com.example
 ## 参数说明
 
 ```text
-java -jar cfr-selective-dec-standalone.jar <input.jar|input.war> <output-dir> <package1[,package2]> [packageN...]
+java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <output-dir> <package1[,package2]> [packageN...] [options]
 ```
 
-- 第一个参数：输入的 `.jar` 或 `.war` 文件。
+- 第一个参数：输入的 `.jar`、`.war` 或目录。
 - 第二个参数：反编译输出目录。
 - 第三个及后续参数：包名前缀。
+- `--output-encoding <charset>`：输出 `.java` 文件编码，默认 `UTF-8`。
+- `--keep-temp`：保留临时过滤 jar 和嵌套归档副本，便于排查。
+- `--debug`：打印完整异常堆栈。
 
 包名支持逗号、分号或空格分隔：
 
@@ -107,18 +134,29 @@ com.foo org.bar
 
 ## 输出结构
 
-输出目录会按来源分层保存，例如：
+输出目录会按来源分层保存。例如输入 `app.war`：
 
 ```text
 out/
-└── app/
-    ├── WEB-INF/
-    │   ├── classes/
-    │   └── lib/
-    └── nested/
+  app/
+    WEB-INF/
+      classes/
+      lib/
+    nested/
 ```
 
-这样可以区分业务 class、依赖 jar、嵌套 jar 的反编译结果。
+输入目录时会保留相对输入目录的原始结构。例如：
+
+```text
+input/
+  target/classes/com/demo/App.class
+  lib/a.jar
+
+out/
+  input/
+    target/classes/com/demo/App.java
+    lib/a/com/demo/FromJar.java
+```
 
 ## 第三方声明
 
@@ -128,4 +166,3 @@ CFR 使用 MIT License，详见：
 
 - `third_party/cfr/LICENSE`
 - `THIRD_PARTY_NOTICES.md`
-

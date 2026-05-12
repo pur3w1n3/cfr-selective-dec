@@ -4,13 +4,12 @@ setlocal
 
 set "ROOT=%~dp0"
 set "CFR_SRC=%ROOT%third_party\cfr\src"
+set "JAVAC=javac"
+set "JAR=jar"
 
 if defined JAVA_HOME if exist "%JAVA_HOME%\bin\javac.exe" (
     set "JAVAC=%JAVA_HOME%\bin\javac.exe"
     set "JAR=%JAVA_HOME%\bin\jar.exe"
-) else (
-    set "JAVAC=javac"
-    set "JAR=jar"
 )
 
 where "%JAVAC%" >nul 2>nul
