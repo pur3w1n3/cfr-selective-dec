@@ -241,7 +241,7 @@ public final class Main {
             String[] cfrArgs = new String[] {
                     filteredJar.toString(),
                     "--hideutf", "false",
-                    "--outputencoding", "UTF-8",
+//                    "--outputencoding", "UTF-8",
                     "--silent", "true",
                     "--outputdir", outputDir.toString()
             };
