@@ -75,6 +75,22 @@ dist\cfr-selective-dec.jar
 
 两个 jar 内容相同，`cfr-selective-dec.jar` 只是便捷别名。
 
+## 发布
+
+推送 tag 后会自动触发 GitHub Actions，执行 `build.bat`，并基于当前 tag 创建 GitHub Release，同时上传以下产物：
+
+```text
+dist\cfr-selective-dec-standalone.jar
+dist\cfr-selective-dec.jar
+```
+
+示例：
+
+```bat
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ## 使用
 
 位置参数：
@@ -166,3 +182,7 @@ CFR 使用 MIT License，详见：
 
 - `third_party/cfr/LICENSE`
 - `THIRD_PARTY_NOTICES.md`
+
+## 更新说明
+
+- 添加workflow自动编译
