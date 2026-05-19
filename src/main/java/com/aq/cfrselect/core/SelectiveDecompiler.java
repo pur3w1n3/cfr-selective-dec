@@ -31,6 +31,7 @@ public final class SelectiveDecompiler {
     private final CliOptions options;
     private final PackageMatcher matcher;
     private final Path tempRoot;
+    private int matchedClasses;
     private int decompiledUnits;
     private int failedUnits;
 
@@ -49,8 +50,12 @@ public final class SelectiveDecompiler {
                 processArchive(options.input, options.output, ArchiveNames.sourceName(options.input), 0);
             }
 
-            if (decompiledUnits == 0) {
-                System.out.println("No matched classes found for packages: " + String.join(", ", options.packages));
+            if (matchedClasses == 0) {
+                if (options.packages.isEmpty()) {
+                    System.out.println("No class files found to decompile.");
+                } else {
+                    System.out.println("No matched classes found for packages: " + String.join(", ", options.packages));
+                }
             }
 
             System.out.println("Decompiled units: " + decompiledUnits + ", failed units: " + failedUnits);
@@ -92,9 +97,9 @@ public final class SelectiveDecompiler {
 
     private void processDirectoryClasses(Path inputDir, Path outputDir, int depth)
             throws IOException, InterruptedException {
-        List<ClassFileMatch> classFiles;
+        List<Path> paths;
         try (Stream<Path> walk = Files.walk(inputDir)) {
-            classFiles = walk
+            paths = walk
                     .filter(new java.util.function.Predicate<Path>() {
                         @Override
                         public boolean test(Path path) {
@@ -103,20 +108,16 @@ public final class SelectiveDecompiler {
                                     && path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".class");
                         }
                     })
-                    .map(new Function<Path, ClassFileMatch>() {
-                        @Override
-                        public ClassFileMatch apply(Path path) {
-                            return matcher.matchClassFile(inputDir, path);
-                        }
-                    })
-                    .filter(new java.util.function.Predicate<ClassFileMatch>() {
-                        @Override
-                        public boolean test(ClassFileMatch match) {
-                            return match != null;
-                        }
-                    })
                     .sorted()
                     .collect(Collectors.toList());
+        }
+
+        List<ClassFileMatch> classFiles = new ArrayList<>();
+        for (Path path : paths) {
+            ClassFileMatch match = matcher.matchClassFile(inputDir, path);
+            if (match != null) {
+                classFiles.add(match);
+            }
         }
 
         Map<String, List<ClassFileMatch>> byRoot = new LinkedHashMap<>();
@@ -135,6 +136,7 @@ public final class SelectiveDecompiler {
             Path targetDir = rootName.isEmpty() ? outputDir : outputDir.resolve(rootName);
             FilterResult filtered = createFilteredJar(entry.getValue(), displayName);
             if (filtered.classCount > 0) {
+                matchedClasses += filtered.classCount;
                 runCfr(filtered.filteredJar, targetDir, displayName, filtered.classCount, depth);
             }
         }
@@ -164,6 +166,7 @@ public final class SelectiveDecompiler {
                 }
             });
             if (filtered.classCount > 0) {
+                matchedClasses += filtered.classCount;
                 runCfr(filtered.filteredJar, outputDir, displayName, filtered.classCount, depth);
             }
 
@@ -197,6 +200,7 @@ public final class SelectiveDecompiler {
             });
 
             if (webClasses.classCount > 0) {
+                matchedClasses += webClasses.classCount;
                 runCfr(webClasses.filteredJar, outputDir.resolve("WEB-INF").resolve("classes"),
                         "WEB-INF/classes", webClasses.classCount, depth);
             }

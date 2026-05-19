@@ -6,7 +6,7 @@
 
 - 支持输入单个 `.jar`、`.war`。
 - 支持输入目录，并递归扫描目录里的 `.jar`、`.war` 和 `.class`。
-- 支持一个或多个包名前缀，例如 `com.foo,org.bar`。
+- 支持一个或多个包名前缀，例如 `com.foo,org.bar`；未提供时默认反编译全部 class。
 - WAR 会按层处理：
   - `WEB-INF/classes`
   - `WEB-INF/lib/*.jar`
@@ -99,6 +99,7 @@ git push origin v1.0.0
 java -jar dist\cfr-selective-dec-standalone.jar app.war out com.example
 java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example,org.demo
 java -jar dist\cfr-selective-dec-standalone.jar app-dir out com.example
+java -jar dist\cfr-selective-dec-standalone.jar app.war out
 ```
 
 命名参数：
@@ -106,6 +107,7 @@ java -jar dist\cfr-selective-dec-standalone.jar app-dir out com.example
 ```bat
 java -jar dist\cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example,org.demo
 java -jar dist\cfr-selective-dec-standalone.jar --input app-dir --output out --packages com.example
+java -jar dist\cfr-selective-dec-standalone.jar --input app.war --output out
 ```
 
 指定输出编码：
@@ -123,18 +125,18 @@ java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example --debug
 使用运行脚本：
 
 ```bat
-run.bat app.war out com.example
+run.bat app.war out
 ```
 
 ## 参数说明
 
 ```text
-java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <output-dir> <package1[,package2]> [packageN...] [options]
+java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <output-dir> [<package1[,package2]> [packageN...]] [options]
 ```
 
 - 第一个参数：输入的 `.jar`、`.war` 或目录。
 - 第二个参数：反编译输出目录。
-- 第三个及后续参数：包名前缀。
+- 第三个及后续参数：包名前缀；留空时默认反编译全部 class。
 - `--output-encoding <charset>`：输出 `.java` 文件编码，默认 `UTF-8`。
 - `--keep-temp`：保留临时过滤 jar 和嵌套归档副本，便于排查。
 - `--debug`：打印完整异常堆栈。

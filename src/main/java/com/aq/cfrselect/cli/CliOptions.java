@@ -54,7 +54,7 @@ public final class CliOptions {
     }
 
     private static CliOptions parsePositional(String[] args) {
-        if (args.length < 3) {
+        if (args.length < 2) {
             throw new UsageException("Missing arguments.");
         }
 
@@ -135,9 +135,6 @@ public final class CliOptions {
         }
         if (Files.isDirectory(options.input) && options.input.equals(options.output)) {
             throw new UsageException("Output directory must not be the same as the input directory.");
-        }
-        if (options.packages.isEmpty()) {
-            throw new UsageException("At least one package is required.");
         }
         try {
             Charset.forName(options.outputEncoding);
