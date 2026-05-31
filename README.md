@@ -1,6 +1,6 @@
 # cfr-selective-dec
 
-基于 CFR 的批量反编译工具，用于本地代码审计。它会先按包名前缀筛选 class，再生成临时过滤 jar 交给内置 CFR 反编译，避免把大型应用里的全部依赖源码一次性展开。
+基于 CFR 的批量反编译工具，用于本地代码审计。它会先按包名前缀筛选 class，再按固定大小分组进入反编译队列，并通过产物缓存检查逐轮重试未完成的 class。
 
 ## 功能
 
@@ -14,6 +14,9 @@
   - `BOOT-INF/classes`
   - `BOOT-INF/lib/*.jar`
 - 遇到嵌套 `jar/war` 会逐级抽取、逐级筛选、逐级反编译。
+- 按每组 `128` 个 class 批量交给 CFR 反编译，线程池大小为 CPU 数量。
+- 批量反编译后检查输出目录中是否存在非空 `.java` 文件；已生成的 class 视为完成并跳过。
+- 未生成产物的 class 会进入下一轮队列；如果整轮没有新增产物，剩余 class 视为无法反编译并写入摘要。
 - 默认传给 CFR：`--hideutf false --outputencoding UTF-8`。
 - 可通过 `--output-encoding GB18030` 等参数改变 `.java` 输出编码。
 
@@ -38,19 +41,17 @@ src/main/java/com/aq/cfrselect/
   cli/CliOptions.java               # 命令行参数解析
   cli/UsagePrinter.java             # 中英文帮助
   cli/UsageException.java           # 参数错误
-  core/SelectiveDecompiler.java     # 扫描、筛选、调用 CFR
+  core/SelectiveDecompiler.java     # 队列式批量反编译
   io/IoUtils.java                   # 流复制、临时目录清理
   matching/PackageMatcher.java      # 包名前缀匹配
   model/ClassFileMatch.java         # class 匹配结果
-  model/FilterResult.java           # 临时过滤 jar 结果
-third_party/cfr/src/                # 内置 CFR 源码
+pom.xml                             # Maven 构建配置
 ```
 
 构建产物目录：
 
 ```text
-build/
-dist/
+target/
 ```
 
 ## 构建
@@ -58,7 +59,8 @@ dist/
 要求：
 
 - JDK 8 或更高版本。
-- 推荐设置 `JAVA_HOME` 指向 JDK；或者确保 `javac`、`jar`、`java` 在 `PATH` 中。
+- Maven 3.6+。
+- 推荐设置 `JAVA_HOME` 指向 JDK；并确保 `mvn`、`java` 在 `PATH` 中。
 
 构建：
 
@@ -69,8 +71,8 @@ build.bat
 产物：
 
 ```text
-dist\cfr-selective-dec-standalone.jar
-dist\cfr-selective-dec.jar
+target\cfr-selective-dec-standalone.jar
+target\cfr-selective-dec.jar
 ```
 
 两个 jar 内容相同，`cfr-selective-dec.jar` 只是便捷别名。
@@ -80,8 +82,8 @@ dist\cfr-selective-dec.jar
 推送 tag 后会自动触发 GitHub Actions，执行 `build.bat`，并基于当前 tag 创建 GitHub Release，同时上传以下产物：
 
 ```text
-dist\cfr-selective-dec-standalone.jar
-dist\cfr-selective-dec.jar
+target\cfr-selective-dec-standalone.jar
+target\cfr-selective-dec.jar
 ```
 
 示例：
@@ -96,30 +98,30 @@ git push origin v1.0.0
 位置参数：
 
 ```bat
-java -jar dist\cfr-selective-dec-standalone.jar app.war out com.example
-java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example,org.demo
-java -jar dist\cfr-selective-dec-standalone.jar app-dir out com.example
-java -jar dist\cfr-selective-dec-standalone.jar app.war out
+java -jar target\cfr-selective-dec-standalone.jar app.war out com.example
+java -jar target\cfr-selective-dec-standalone.jar app.jar out com.example,org.demo
+java -jar target\cfr-selective-dec-standalone.jar app-dir out com.example
+java -jar target\cfr-selective-dec-standalone.jar app.war out
 ```
 
 命名参数：
 
 ```bat
-java -jar dist\cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example,org.demo
-java -jar dist\cfr-selective-dec-standalone.jar --input app-dir --output out --packages com.example
-java -jar dist\cfr-selective-dec-standalone.jar --input app.war --output out
+java -jar target\cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example,org.demo
+java -jar target\cfr-selective-dec-standalone.jar --input app-dir --output out --packages com.example
+java -jar target\cfr-selective-dec-standalone.jar --input app.war --output out
 ```
 
 指定输出编码：
 
 ```bat
-java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example --output-encoding GB18030
+java -jar target\cfr-selective-dec-standalone.jar app.jar out com.example --output-encoding GB18030
 ```
 
 打印完整异常堆栈：
 
 ```bat
-java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example --debug
+java -jar target\cfr-selective-dec-standalone.jar app.jar out com.example --debug
 ```
 
 使用运行脚本：
@@ -152,18 +154,19 @@ com.foo org.bar
 
 ## 输出结构
 
-输出目录会按来源分层保存。例如输入 `app.war`：
+输出目录按 class 包路径保存，多个来源中相同 fully-qualified class name 会映射到同一个 `.java` 文件。任务收集阶段会按最终输出路径去重，重复项不会进入反编译队列，并会记录在 `summary.txt` 的 `duplicate_classes` 中。
+
+例如输入 `app.war` 中存在 `WEB-INF/classes/com/demo/App.class`：
 
 ```text
 out/
-  app/
-    WEB-INF/
-      classes/
-      lib/
-    nested/
+  com/
+    demo/
+      App.java
+  summary.txt
 ```
 
-输入目录时会保留相对输入目录的原始结构。例如：
+输入目录中的裸 `.class`、`.jar`、`.war` 和嵌套归档也遵循同样规则。例如：
 
 ```text
 input/
@@ -171,18 +174,19 @@ input/
   lib/a.jar
 
 out/
-  input/
-    target/classes/com/demo/App.java
-    lib/a/com/demo/FromJar.java
+  com/
+    demo/
+      App.java
+      FromJar.java
+  summary.txt
 ```
 
 ## 第三方声明
 
-本项目内置 CFR 源码，位于 `third_party/cfr`。
+本项目通过 Maven 依赖使用 CFR。
 
 CFR 使用 MIT License，详见：
 
-- `third_party/cfr/LICENSE`
 - `THIRD_PARTY_NOTICES.md`
 
 ## 更新说明

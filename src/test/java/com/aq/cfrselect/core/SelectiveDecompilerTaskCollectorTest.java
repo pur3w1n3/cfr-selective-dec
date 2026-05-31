@@ -1,0 +1,76 @@
+package com.aq.cfrselect.core;
+
+import com.aq.cfrselect.cli.CliOptions;
+import com.aq.cfrselect.matching.PackageMatcher;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+import static org.junit.Assert.assertEquals;
+
+public class SelectiveDecompilerTaskCollectorTest {
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
+
+    @Test
+    public void collectDeduplicatesClassesByFinalOutputPath() throws Exception {
+        File input = temp.newFolder("input");
+        File output = new File(temp.getRoot(), "out");
+        writeJar(new File(input, "a.jar"), "com/acme/Duplicate.class");
+        writeJar(new File(input, "b.jar"), "com/acme/Duplicate.class");
+        writeJar(new File(input, "c.jar"), "com/acme/Unique.class");
+
+        CliOptions options = CliOptions.parse(new String[] {
+                "--input", input.getAbsolutePath(),
+                "--output", output.getAbsolutePath(),
+                "--packages", "com.acme"
+        });
+        SelectiveDecompilerSummary summary = new SelectiveDecompilerSummary();
+        Path tempRoot = temp.newFolder("tmp").toPath();
+
+        SelectiveDecompilerTaskCollector collector = new SelectiveDecompilerTaskCollector(
+                options, new PackageMatcher(options.packages), tempRoot, summary);
+        List<DecompileTask> tasks = collector.collect();
+
+        assertEquals(2, tasks.size());
+        assertEquals(2, summary.matchedClasses.get());
+        assertEquals(1, summary.duplicateUnits.get());
+        assertEquals(1, summary.duplicateClasses.size());
+    }
+
+    @Test
+    public void collectMapsBootInfClassesToApplicationClassPath() throws Exception {
+        File input = temp.newFolder("input");
+        File output = new File(temp.getRoot(), "out");
+        writeJar(new File(input, "boot.jar"), "BOOT-INF/classes/com/acme/App.class");
+
+        CliOptions options = CliOptions.parse(new String[] {
+                "--input", input.getAbsolutePath(),
+                "--output", output.getAbsolutePath(),
+                "--packages", "com.acme"
+        });
+        SelectiveDecompilerSummary summary = new SelectiveDecompilerSummary();
+        SelectiveDecompilerTaskCollector collector = new SelectiveDecompilerTaskCollector(
+                options, new PackageMatcher(options.packages), temp.newFolder("tmp").toPath(), summary);
+
+        List<DecompileTask> tasks = collector.collect();
+
+        assertEquals(1, tasks.size());
+        assertEquals("com/acme/App.class", tasks.get(0).entryName);
+    }
+
+    private static void writeJar(File jarFile, String entryName) throws Exception {
+        try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(jarFile))) {
+            zip.putNextEntry(new ZipEntry(entryName));
+            zip.write(new byte[] { 0, 1, 2, 3 });
+            zip.closeEntry();
+        }
+    }
+}

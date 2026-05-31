@@ -32,6 +32,15 @@ public final class Main {
                 System.err.println("Run with --debug to print the full stack trace.");
             }
             System.exit(1);
+        } catch (Throwable t) {
+            System.err.println("Fatal error: " + t.getClass().getSimpleName()
+                    + (t.getMessage() == null ? "" : ": " + t.getMessage()));
+            if (CliOptions.has(args, "--debug")) {
+                t.printStackTrace(System.err);
+            } else {
+                System.err.println("Run with --debug to print the full stack trace.");
+            }
+            System.exit(1);
         }
     }
 }

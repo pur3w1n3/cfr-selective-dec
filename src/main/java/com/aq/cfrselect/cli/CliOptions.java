@@ -72,6 +72,8 @@ public final class CliOptions {
                 debug = true;
             } else if ("--output-encoding".equals(arg) || "--outputencoding".equals(arg)) {
                 outputEncoding = nextValue(args, ++i, arg);
+            } else if (arg.startsWith("-")) {
+                throw new UsageException("Unknown option: " + arg);
             } else {
                 packages.addAll(parsePackages(new String[] { arg }));
             }

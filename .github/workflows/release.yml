@@ -33,5 +33,5 @@ jobs:
           body: |
             添加workflow自动编译
           files: |
-            dist/cfr-selective-dec-standalone.jar
-            dist/cfr-selective-dec.jar
+            target/cfr-selective-dec-standalone.jar
+            target/cfr-selective-dec.jar
