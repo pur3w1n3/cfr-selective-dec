@@ -36,10 +36,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: maven
 
       - name: Build
-        shell: cmd
-        run: build.bat
+        run: mvn -B clean package
 
       - name: Resolve release metadata
         id: release_meta

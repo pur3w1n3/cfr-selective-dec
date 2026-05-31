@@ -65,7 +65,7 @@ target/
 构建：
 
 ```bat
-build.bat
+mvn clean package
 ```
 
 产物：
@@ -79,7 +79,7 @@ target\cfr-selective-dec.jar
 
 ## 发布
 
-推送 tag 后会自动触发 GitHub Actions，执行 `build.bat`，并基于当前 tag 创建 GitHub Release，同时上传以下产物：
+推送 tag 后会自动触发 GitHub Actions，执行 `mvn -B clean package`，并基于当前 tag 创建 GitHub Release，同时上传以下产物：
 
 ```text
 target\cfr-selective-dec-standalone.jar
@@ -122,12 +122,6 @@ java -jar target\cfr-selective-dec-standalone.jar app.jar out com.example --outp
 
 ```bat
 java -jar target\cfr-selective-dec-standalone.jar app.jar out com.example --debug
-```
-
-使用运行脚本：
-
-```bat
-run.bat app.war out
 ```
 
 ## 参数说明
