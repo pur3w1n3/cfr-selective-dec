@@ -4,6 +4,21 @@ on:
   push:
     tags:
       - "**"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update"
+        required: true
+        type: string
+      release_name:
+        description: "Release name. Defaults to the tag when empty"
+        required: false
+        type: string
+      body:
+        description: "Release notes"
+        required: false
+        type: string
+        default: "Manual release"
 
 permissions:
   contents: write
@@ -26,12 +41,34 @@ jobs:
         shell: cmd
         run: build.bat
 
+      - name: Resolve release metadata
+        id: release_meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+            $name = "${{ inputs.release_name }}"
+            $body = "${{ inputs.body }}"
+          } else {
+            $tag = "${{ github.ref_name }}"
+            $name = "${{ github.ref_name }}"
+            $body = "添加workflow自动编译"
+          }
+          if ([string]::IsNullOrWhiteSpace($name)) {
+            $name = $tag
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "body<<EOF" >> $env:GITHUB_OUTPUT
+          $body >> $env:GITHUB_OUTPUT
+          "EOF" >> $env:GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          body: |
-            添加workflow自动编译
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.name }}
+          body: ${{ steps.release_meta.outputs.body }}
           files: |
             target/cfr-selective-dec-standalone.jar
             target/cfr-selective-dec.jar
