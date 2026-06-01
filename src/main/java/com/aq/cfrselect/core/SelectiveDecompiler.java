@@ -5,8 +5,13 @@ import com.aq.cfrselect.io.IoUtils;
 import com.aq.cfrselect.matching.PackageMatcher;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 public final class SelectiveDecompiler {
@@ -39,6 +44,7 @@ public final class SelectiveDecompiler {
             executor.runQueues(tasks);
 
             summary.write(options.output.resolve("summary.txt"));
+            writeManifest(tasks, options.output.resolve("manifest.txt"));
 
             if (summary.matchedClasses.get() > 0) {
                 System.out.println("Finished: success=" + summary.decompiledUnits.get()
@@ -55,5 +61,40 @@ public final class SelectiveDecompiler {
                 IoUtils.deleteRecursively(tempRoot);
             }
         }
+    }
+
+    private void writeManifest(List<DecompileTask> tasks, Path manifestFile) throws IOException {
+        List<DecompileTask> completedTasks = new ArrayList<DecompileTask>();
+        for (DecompileTask task : tasks) {
+            if (hasReusableOutput(task)) {
+                completedTasks.add(task);
+            }
+        }
+        Collections.sort(completedTasks, new Comparator<DecompileTask>() {
+            @Override
+            public int compare(DecompileTask a, DecompileTask b) {
+                return a.className.compareTo(b.className);
+            }
+        });
+
+        List<String> lines = new ArrayList<String>();
+        for (DecompileTask task : completedTasks) {
+            lines.add(task.className + " " + task.sourceLocation);
+        }
+        Files.write(manifestFile, lines, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+    }
+
+    private boolean hasReusableOutput(DecompileTask task) {
+        Path outputFile = task.outputDir.resolve(toJavaEntry(task.entryName));
+        try {
+            return Files.isRegularFile(outputFile) && Files.size(outputFile) > 0;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static String toJavaEntry(String entryName) {
+        return entryName.substring(0, entryName.length() - ".class".length()) + ".java";
     }
 }

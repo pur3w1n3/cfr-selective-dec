@@ -42,7 +42,8 @@ final class SelectiveDecompilerTaskCollector {
         if (Files.isDirectory(options.input)) {
             processDirectory(options.input, normalizedOutputRoot, tasks);
         } else {
-            processArchive(options.input, normalizedOutputRoot, ArchiveNames.sourceName(options.input), tasks);
+            processArchive(options.input, normalizedOutputRoot, ArchiveNames.sourceName(options.input),
+                    options.input.toAbsolutePath().normalize().toString(), tasks);
         }
         List<DecompileTask> uniqueTasks = deduplicateByOutputTarget(tasks);
         Collections.sort(uniqueTasks, new Comparator<DecompileTask>() {
@@ -112,7 +113,9 @@ final class SelectiveDecompilerTaskCollector {
             String displayName = classFile.rootName.isEmpty()
                     ? "classes!" + classFile.entryName
                     : classFile.rootName + "!" + classFile.entryName;
-            tasks.add(new DecompileTask(displayName, outputDir, classFile.entryName, new DirectoryInputSource(classFile.path)));
+            tasks.add(new DecompileTask(displayName, outputDir, classFile.entryName,
+                    classFile.path.toAbsolutePath().normalize().toString(),
+                    new DirectoryInputSource(classFile.path)));
         }
 
         List<Path> archives;
@@ -132,23 +135,26 @@ final class SelectiveDecompilerTaskCollector {
 
         for (Path archive : archives) {
             String displayName = ArchiveNames.normalizeZipName(inputDir.relativize(archive).toString());
-            processArchive(archive, outputDir, displayName, tasks);
+            processArchive(archive, outputDir, displayName,
+                    archive.toAbsolutePath().normalize().toString(), tasks);
         }
     }
 
-    private void processArchive(Path archive, Path outputBase, String displayName, List<DecompileTask> tasks)
+    private void processArchive(Path archive, Path outputBase, String displayName,
+                                String sourceArchiveLabel, List<DecompileTask> tasks)
             throws IOException, InterruptedException {
         String ext = ArchiveNames.extension(archive.toString());
         if (".war".equals(ext)) {
-            processWar(archive, outputBase, tasks);
+            processWar(archive, outputBase, sourceArchiveLabel, tasks);
         } else if (".jar".equals(ext)) {
-            processJar(archive, outputBase, displayName, tasks);
+            processJar(archive, outputBase, displayName, sourceArchiveLabel, tasks);
         } else {
             throw new IOException("Unsupported input type: " + archive);
         }
     }
 
-    private void processJar(Path jarFile, Path outputDir, String displayName, List<DecompileTask> tasks)
+    private void processJar(Path jarFile, Path outputDir, String displayName,
+                            String sourceArchiveLabel, List<DecompileTask> tasks)
             throws IOException, InterruptedException {
         try (ZipFile zip = new ZipFile(jarFile.toFile())) {
             Enumeration<? extends ZipEntry> entries = zip.entries();
@@ -160,7 +166,8 @@ final class SelectiveDecompilerTaskCollector {
                 }
                 if (ArchiveNames.isNestedArchive(entryName)) {
                     Path nested = extractNested(zip, entry);
-                    processArchive(nested, outputDir, ArchiveNames.safeArchiveOutputName(entryName), tasks);
+                    processArchive(nested, outputDir, ArchiveNames.safeArchiveOutputName(entryName),
+                            sourceArchiveLabel + "!" + entryName, tasks);
                     continue;
                 }
 
@@ -168,12 +175,14 @@ final class SelectiveDecompilerTaskCollector {
                 if (!matcher.matchesClassEntry(mapped)) {
                     continue;
                 }
-                tasks.add(new DecompileTask(displayName + "!" + mapped, outputDir, mapped, new ZipInputSource(jarFile, entryName)));
+                tasks.add(new DecompileTask(displayName + "!" + mapped, outputDir, mapped,
+                        sourceArchiveLabel + "!" + toClassName(mapped),
+                        new ZipInputSource(jarFile, entryName)));
             }
         }
     }
 
-    private void processWar(Path warFile, Path outputDir, List<DecompileTask> tasks)
+    private void processWar(Path warFile, Path outputDir, String sourceArchiveLabel, List<DecompileTask> tasks)
             throws IOException, InterruptedException {
         try (ZipFile zip = new ZipFile(warFile.toFile())) {
             Enumeration<? extends ZipEntry> entries = zip.entries();
@@ -187,13 +196,14 @@ final class SelectiveDecompilerTaskCollector {
                 if (name.startsWith(ArchiveNames.WEB_LIB) && name.toLowerCase().endsWith(".jar")) {
                     Path libJar = extractNested(zip, entry);
                     String libName = ArchiveNames.safeFileName(name.substring(ArchiveNames.WEB_LIB.length()));
-                    processJar(libJar, outputDir, libName, tasks);
+                    processJar(libJar, outputDir, libName, sourceArchiveLabel + "!" + name, tasks);
                     continue;
                 }
 
                 if (ArchiveNames.isNestedArchive(name)) {
                     Path nested = extractNested(zip, entry);
-                    processArchive(nested, outputDir, ArchiveNames.safeArchiveOutputName(name), tasks);
+                    processArchive(nested, outputDir, ArchiveNames.safeArchiveOutputName(name),
+                            sourceArchiveLabel + "!" + name, tasks);
                     continue;
                 }
 
@@ -208,9 +218,15 @@ final class SelectiveDecompilerTaskCollector {
                 }
 
                 tasks.add(new DecompileTask("WEB-INF/classes!" + mapped,
-                        outputDir, mapped, new ZipInputSource(warFile, name)));
+                        outputDir, mapped, sourceArchiveLabel + "!" + toClassName(mapped),
+                        new ZipInputSource(warFile, name)));
             }
         }
+    }
+
+    private static String toClassName(String entryName) {
+        String withoutSuffix = entryName.substring(0, entryName.length() - ".class".length());
+        return withoutSuffix.replace('/', '.').replace('\\', '.');
     }
 
     private Path extractNested(ZipFile zip, ZipEntry entry) throws IOException {

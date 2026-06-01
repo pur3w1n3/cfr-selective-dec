@@ -43,6 +43,9 @@ public class SelectiveDecompilerTaskCollectorTest {
         assertEquals(2, summary.matchedClasses.get());
         assertEquals(1, summary.duplicateUnits.get());
         assertEquals(1, summary.duplicateClasses.size());
+        assertEquals("com.acme.Duplicate", tasks.get(0).className);
+        assertEquals(new File(input, "a.jar").toPath().toAbsolutePath().normalize()
+                + "!com.acme.Duplicate", tasks.get(0).sourceLocation);
     }
 
     @Test
@@ -64,6 +67,35 @@ public class SelectiveDecompilerTaskCollectorTest {
 
         assertEquals(1, tasks.size());
         assertEquals("com/acme/App.class", tasks.get(0).entryName);
+        assertEquals("com.acme.App", tasks.get(0).className);
+        assertEquals(new File(input, "boot.jar").toPath().toAbsolutePath().normalize()
+                + "!com.acme.App", tasks.get(0).sourceLocation);
+    }
+
+    @Test
+    public void collectRecordsDirectoryClassSourcePath() throws Exception {
+        File input = temp.newFolder("input");
+        File output = new File(temp.getRoot(), "out");
+        File classFile = new File(input, "com/acme/App.class");
+        classFile.getParentFile().mkdirs();
+        try (FileOutputStream out = new FileOutputStream(classFile)) {
+            out.write(new byte[] { 0, 1, 2, 3 });
+        }
+
+        CliOptions options = CliOptions.parse(new String[] {
+                "--input", input.getAbsolutePath(),
+                "--output", output.getAbsolutePath(),
+                "--packages", "com.acme"
+        });
+        SelectiveDecompilerSummary summary = new SelectiveDecompilerSummary();
+        SelectiveDecompilerTaskCollector collector = new SelectiveDecompilerTaskCollector(
+                options, new PackageMatcher(options.packages), temp.newFolder("tmp").toPath(), summary);
+
+        List<DecompileTask> tasks = collector.collect();
+
+        assertEquals(1, tasks.size());
+        assertEquals("com.acme.App", tasks.get(0).className);
+        assertEquals(classFile.toPath().toAbsolutePath().normalize().toString(), tasks.get(0).sourceLocation);
     }
 
     private static void writeJar(File jarFile, String entryName) throws Exception {

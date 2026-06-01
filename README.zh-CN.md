@@ -18,6 +18,7 @@
 - 已存在且非空的 `.java` 文件会作为缓存命中跳过。
 - 未生成产物的 class 会进入下一轮重试；如果某一整轮没有新增产物，剩余 class 会被记录为失败。
 - 会跳过映射到同一个最终 `.java` 路径的重复 class，并记录到 `summary.txt`。
+- 会生成 `manifest.txt`，记录每个已生成 `.java` 文件对应的来源 class。
 - 默认 CFR 参数为 `--hideutf false`，输出编码默认为 UTF-8。
 
 ## 环境要求
@@ -79,7 +80,7 @@ java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <outp
 | 参数 | 说明 |
 | --- | --- |
 | `-i, --input <path>` | 输入 `.jar`、`.war`、classes 目录，或需要扫描的目录树。 |
-| `-o, --output <dir>` | 生成 `.java` 文件和 `summary.txt` 的输出目录。 |
+| `-o, --output <dir>` | 生成 `.java` 文件、`summary.txt` 和 `manifest.txt` 的输出目录。 |
 | `-p, --packages <prefixes>` | 可选包名前缀。多个前缀可用逗号或分号分隔。 |
 | `--output-encoding <charset>` | `.java` 文件输出编码。默认：`UTF-8`。 |
 | `--keep-temp` | 保留临时提取的嵌套归档，便于排查问题。 |
@@ -150,6 +151,17 @@ java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out -
 - `duplicates_skipped`：反编译前跳过的重复 class 数量。
 - `failed_classes`：未成功反编译的 class 列表。
 - `duplicate_classes`：跳过的重复项以及被保留的来源。
+
+## Manifest
+
+每次运行都会在输出目录写入 `manifest.txt`。每一行记录一个已生成 Java 类和用于反编译的来源 class：
+
+```text
+com.example.Main /path/to/app.jar!com.example.Main
+com.example.Main1 /path/to/com/example/Main1.class
+```
+
+只有实际存在且非空的 `.java` 产物会被写入。任务收集阶段跳过的重复 class 不会单独列出；manifest 中使用被保留的来源。
 
 ## 安全说明
 

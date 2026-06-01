@@ -18,6 +18,7 @@ A CFR-based batch decompiler for local Java auditing. It scans `.jar`, `.war`, c
 - Reuse existing non-empty `.java` outputs as cache hits.
 - Retry classes that did not produce output; if a full round produces no new files, remaining classes are reported as failed.
 - Skip duplicate classes that map to the same final `.java` path and record them in `summary.txt`.
+- Write `manifest.txt` with one source mapping for each generated `.java` file.
 - Use CFR with `--hideutf false` and UTF-8 output by default.
 
 ## Requirements
@@ -79,7 +80,7 @@ java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <outp
 | Option | Description |
 | --- | --- |
 | `-i, --input <path>` | Input `.jar`, `.war`, classes directory, or directory tree to scan. |
-| `-o, --output <dir>` | Directory for generated `.java` files and `summary.txt`. |
+| `-o, --output <dir>` | Directory for generated `.java` files, `summary.txt`, and `manifest.txt`. |
 | `-p, --packages <prefixes>` | Optional package prefixes. Use commas or semicolons to separate multiple prefixes. |
 | `--output-encoding <charset>` | Output encoding for `.java` files. Default: `UTF-8`. |
 | `--keep-temp` | Keep temporary extracted archives for troubleshooting. |
@@ -150,6 +151,17 @@ Each run writes `summary.txt` to the output directory. It includes:
 - `duplicates_skipped`: duplicate class tasks skipped before decompilation.
 - `failed_classes`: unresolved class list.
 - `duplicate_classes`: skipped duplicates and the retained source.
+
+## Manifest
+
+Each run writes `manifest.txt` to the output directory. Each line maps a generated Java class to the source class location used for decompilation:
+
+```text
+com.example.Main /path/to/app.jar!com.example.Main
+com.example.Main1 /path/to/com/example/Main1.class
+```
+
+Only classes with an existing non-empty `.java` output are included. Duplicate classes skipped during task collection are not listed separately; the retained source is used.
 
 ## Security Notes
 
