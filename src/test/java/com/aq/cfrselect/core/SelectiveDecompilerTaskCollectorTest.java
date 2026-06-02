@@ -20,7 +20,7 @@ public class SelectiveDecompilerTaskCollectorTest {
     public TemporaryFolder temp = new TemporaryFolder();
 
     @Test
-    public void collectDeduplicatesClassesByFinalOutputPath() throws Exception {
+    public void collectKeepsSameClassNameFromDifferentArchives() throws Exception {
         File input = temp.newFolder("input");
         File output = new File(temp.getRoot(), "out");
         writeJar(new File(input, "a.jar"), "com/acme/Duplicate.class");
@@ -39,11 +39,14 @@ public class SelectiveDecompilerTaskCollectorTest {
                 options, new PackageMatcher(options.packages), tempRoot, summary);
         List<DecompileTask> tasks = collector.collect();
 
-        assertEquals(2, tasks.size());
-        assertEquals(2, summary.matchedClasses.get());
-        assertEquals(1, summary.duplicateUnits.get());
-        assertEquals(1, summary.duplicateClasses.size());
+        assertEquals(3, tasks.size());
+        assertEquals(3, summary.matchedClasses.get());
+        assertEquals(0, summary.duplicateUnits.get());
+        assertEquals(0, summary.duplicateClasses.size());
         assertEquals("com.acme.Duplicate", tasks.get(0).className);
+        assertEquals(options.output.resolve("input").resolve("a"), tasks.get(0).outputDir);
+        assertEquals("com.acme.Duplicate", tasks.get(1).className);
+        assertEquals(options.output.resolve("input").resolve("b"), tasks.get(1).outputDir);
         assertEquals(new File(input, "a.jar").toPath().toAbsolutePath().normalize()
                 + "!com.acme.Duplicate", tasks.get(0).sourceLocation);
     }
@@ -68,6 +71,7 @@ public class SelectiveDecompilerTaskCollectorTest {
         assertEquals(1, tasks.size());
         assertEquals("com/acme/App.class", tasks.get(0).entryName);
         assertEquals("com.acme.App", tasks.get(0).className);
+        assertEquals(options.output.resolve("input").resolve("boot"), tasks.get(0).outputDir);
         assertEquals(new File(input, "boot.jar").toPath().toAbsolutePath().normalize()
                 + "!com.acme.App", tasks.get(0).sourceLocation);
     }
@@ -95,6 +99,7 @@ public class SelectiveDecompilerTaskCollectorTest {
 
         assertEquals(1, tasks.size());
         assertEquals("com.acme.App", tasks.get(0).className);
+        assertEquals(options.output.resolve("input"), tasks.get(0).outputDir);
         assertEquals(classFile.toPath().toAbsolutePath().normalize().toString(), tasks.get(0).sourceLocation);
     }
 

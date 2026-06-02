@@ -124,12 +124,13 @@ final class SelectiveDecompilerExecutor {
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         try {
             int round = 0;
+            int batchSize = GROUP_SIZE;
             while (!pending.isEmpty()) {
                 round++;
-                List<List<DecompileTask>> groups = partition(pending, GROUP_SIZE);
+                List<List<DecompileTask>> groups = partition(pending, batchSize);
                 summary.totalQueueTasks.addAndGet(groups.size());
                 logInfo("[queue-round] round=" + round + " groups=" + groups.size()
-                        + " pending=" + pending.size());
+                        + " pending=" + pending.size() + " groupSize=" + batchSize);
 
                 List<Future<BatchResult>> futures = new ArrayList<Future<BatchResult>>(groups.size());
                 for (List<DecompileTask> group : groups) {
@@ -153,8 +154,15 @@ final class SelectiveDecompilerExecutor {
                     break;
                 }
                 if (producedThisRound == 0) {
-                    markPermanentFailures(nextPending);
-                    break;
+                    if (batchSize == 1) {
+                        markPermanentFailures(nextPending);
+                        break;
+                    }
+                    batchSize = Math.max(1, batchSize / 2);
+                    logInfo("[queue-retry-smaller] nextGroupSize=" + batchSize
+                            + " pending=" + nextPending.size());
+                    pending = nextPending;
+                    continue;
                 }
                 pending = nextPending;
             }

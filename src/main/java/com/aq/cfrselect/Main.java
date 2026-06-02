@@ -12,6 +12,7 @@ public final class Main {
     public static void main(String[] args) {
         try {
             CliOptions options = CliOptions.parse(args);
+
             if (options.help) {
                 UsagePrinter.print();
                 return;
@@ -32,6 +33,7 @@ public final class Main {
                 System.err.println("Run with --debug to print the full stack trace.");
             }
             System.exit(1);
+
         } catch (Throwable t) {
             System.err.println("Fatal error: " + t.getClass().getSimpleName()
                     + (t.getMessage() == null ? "" : ": " + t.getMessage()));
@@ -41,6 +43,7 @@ public final class Main {
                 System.err.println("Run with --debug to print the full stack trace.");
             }
             System.exit(1);
+
         }
     }
 }

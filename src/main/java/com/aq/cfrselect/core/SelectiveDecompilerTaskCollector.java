@@ -38,11 +38,10 @@ final class SelectiveDecompilerTaskCollector {
 
     List<DecompileTask> collect() throws IOException, InterruptedException {
         List<DecompileTask> tasks = new ArrayList<DecompileTask>();
-        Path normalizedOutputRoot = options.output;
         if (Files.isDirectory(options.input)) {
-            processDirectory(options.input, normalizedOutputRoot, tasks);
+            processDirectory(options.input, options.output.resolve(ArchiveNames.sourceName(options.input)), tasks);
         } else {
-            processArchive(options.input, normalizedOutputRoot, ArchiveNames.sourceName(options.input),
+            processArchive(options.input, options.output, ArchiveNames.sourceName(options.input),
                     options.input.toAbsolutePath().normalize().toString(), tasks);
         }
         List<DecompileTask> uniqueTasks = deduplicateByOutputTarget(tasks);
@@ -113,7 +112,8 @@ final class SelectiveDecompilerTaskCollector {
             String displayName = classFile.rootName.isEmpty()
                     ? "classes!" + classFile.entryName
                     : classFile.rootName + "!" + classFile.entryName;
-            tasks.add(new DecompileTask(displayName, outputDir, classFile.entryName,
+            Path taskOutputDir = classFile.rootName.isEmpty() ? outputDir : outputDir.resolve(classFile.rootName);
+            tasks.add(new DecompileTask(displayName, taskOutputDir, classFile.entryName,
                     classFile.path.toAbsolutePath().normalize().toString(),
                     new DirectoryInputSource(classFile.path)));
         }
@@ -145,9 +145,11 @@ final class SelectiveDecompilerTaskCollector {
             throws IOException, InterruptedException {
         String ext = ArchiveNames.extension(archive.toString());
         if (".war".equals(ext)) {
-            processWar(archive, outputBase, sourceArchiveLabel, tasks);
+            processWar(archive, outputBase.resolve(ArchiveNames.stripExtension(displayName)),
+                    sourceArchiveLabel, tasks);
         } else if (".jar".equals(ext)) {
-            processJar(archive, outputBase, displayName, sourceArchiveLabel, tasks);
+            processJar(archive, outputBase.resolve(ArchiveNames.stripExtension(displayName)),
+                    displayName, sourceArchiveLabel, tasks);
         } else {
             throw new IOException("Unsupported input type: " + archive);
         }
@@ -166,7 +168,7 @@ final class SelectiveDecompilerTaskCollector {
                 }
                 if (ArchiveNames.isNestedArchive(entryName)) {
                     Path nested = extractNested(zip, entry);
-                    processArchive(nested, outputDir, ArchiveNames.safeArchiveOutputName(entryName),
+                    processArchive(nested, outputDir.resolve("nested"), ArchiveNames.safeArchiveOutputName(entryName),
                             sourceArchiveLabel + "!" + entryName, tasks);
                     continue;
                 }
@@ -196,13 +198,15 @@ final class SelectiveDecompilerTaskCollector {
                 if (name.startsWith(ArchiveNames.WEB_LIB) && name.toLowerCase().endsWith(".jar")) {
                     Path libJar = extractNested(zip, entry);
                     String libName = ArchiveNames.safeFileName(name.substring(ArchiveNames.WEB_LIB.length()));
-                    processJar(libJar, outputDir, libName, sourceArchiveLabel + "!" + name, tasks);
+                    Path libOutput = outputDir.resolve("WEB-INF").resolve("lib")
+                            .resolve(ArchiveNames.stripExtension(libName));
+                    processJar(libJar, libOutput, libName, sourceArchiveLabel + "!" + name, tasks);
                     continue;
                 }
 
                 if (ArchiveNames.isNestedArchive(name)) {
                     Path nested = extractNested(zip, entry);
-                    processArchive(nested, outputDir, ArchiveNames.safeArchiveOutputName(name),
+                    processArchive(nested, outputDir.resolve("nested"), ArchiveNames.safeArchiveOutputName(name),
                             sourceArchiveLabel + "!" + name, tasks);
                     continue;
                 }
@@ -218,7 +222,8 @@ final class SelectiveDecompilerTaskCollector {
                 }
 
                 tasks.add(new DecompileTask("WEB-INF/classes!" + mapped,
-                        outputDir, mapped, sourceArchiveLabel + "!" + toClassName(mapped),
+                        outputDir.resolve("WEB-INF").resolve("classes"), mapped,
+                        sourceArchiveLabel + "!" + toClassName(mapped),
                         new ZipInputSource(warFile, name)));
             }
         }
