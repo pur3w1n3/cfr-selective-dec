@@ -70,5 +70,4 @@ jobs:
           name: ${{ steps.release_meta.outputs.name }}
           body: ${{ steps.release_meta.outputs.body }}
           files: |
-            target/cfr-selective-dec-standalone.jar
             target/cfr-selective-dec.jar

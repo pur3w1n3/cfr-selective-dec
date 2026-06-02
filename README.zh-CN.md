@@ -35,30 +35,29 @@ mvn clean package
 构建产物：
 
 ```text
-target/cfr-selective-dec-standalone.jar
 target/cfr-selective-dec.jar
 ```
 
-两个 jar 都可以直接运行；`cfr-selective-dec.jar` 是 standalone jar 的便捷副本。
+`cfr-selective-dec.jar` 是包含 CFR 的完整可运行 jar。
 
 ## 快速开始
 
 反编译 WAR，并只保留 `com.example` 包下的 class：
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example
+java -jar target/cfr-selective-dec.jar --input app.war --output out --packages com.example
 ```
 
 反编译目录树中的全部 class：
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input ./build-output --output out
+java -jar target/cfr-selective-dec.jar --input ./build-output --output out
 ```
 
 反编译多个包名前缀：
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.jar --output out --packages com.foo,org.demo
+java -jar target/cfr-selective-dec.jar --input app.jar --output out --packages com.foo,org.demo
 ```
 
 ## 使用方法
@@ -66,13 +65,13 @@ java -jar target/cfr-selective-dec-standalone.jar --input app.jar --output out -
 命名参数：
 
 ```text
-java -jar cfr-selective-dec-standalone.jar --input <path> --output <dir> [--packages <prefixes>] [options]
+java -jar cfr-selective-dec.jar --input <path> --output <dir> [--packages <prefixes>] [options]
 ```
 
 位置参数：
 
 ```text
-java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <output-dir> [package-prefixes...] [options]
+java -jar cfr-selective-dec.jar <input.jar|input.war|input-dir> <output-dir> [package-prefixes...] [options]
 ```
 
 ### 参数
@@ -101,7 +100,7 @@ com/foo
 使用位置参数时，也可以用空格分隔多个包名前缀：
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar app.jar out com.foo org.bar
+java -jar target/cfr-selective-dec.jar app.jar out com.foo org.bar
 ```
 
 如果没有提供 `--packages` 或位置参数包名前缀，则默认反编译所有匹配到的 `.class` 文件。
@@ -111,7 +110,7 @@ java -jar target/cfr-selective-dec-standalone.jar app.jar out com.foo org.bar
 如果审计项目需要非 UTF-8 源码编码，可以使用 `--output-encoding`：
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar app.jar out com.example --output-encoding GB18030
+java -jar target/cfr-selective-dec.jar app.jar out com.example --output-encoding GB18030
 ```
 
 ### 调试
@@ -119,13 +118,13 @@ java -jar target/cfr-selective-dec-standalone.jar app.jar out com.example --outp
 使用 `--debug` 输出完整异常堆栈和内部调试信息：
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --debug
+java -jar target/cfr-selective-dec.jar --input app.war --output out --debug
 ```
 
 需要检查临时提取的嵌套归档时，可以使用 `--keep-temp`：
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --keep-temp
+java -jar target/cfr-selective-dec.jar --input app.war --output out --keep-temp
 ```
 
 ## 工作方式

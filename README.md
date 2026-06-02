@@ -16,7 +16,7 @@ A CFR-based batch decompiler for local Java auditing. It scans `.jar`, `.war`, c
 - Recursively extract and process nested `.jar` and `.war` files.
 - Process classes in groups of `128` using a thread pool sized to the available CPU count.
 - Reuse existing non-empty `.java` outputs as cache hits.
-- Retry classes that did not produce output; if a full round produces no new files, remaining classes are reported as failed.
+- Retry classes that did not produce output; failed batches are split down to single classes before permanent failure.
 - Skip duplicate classes that map to the same final `.java` path and record them in `summary.txt`.
 - Write `manifest.txt` with one source mapping for each generated `.java` file.
 - Use CFR with `--hideutf false` and UTF-8 output by default.
@@ -35,30 +35,29 @@ mvn clean package
 The build produces:
 
 ```text
-target/cfr-selective-dec-standalone.jar
 target/cfr-selective-dec.jar
 ```
 
-Both jars are runnable; `cfr-selective-dec.jar` is a convenience copy of the standalone jar.
+The jar is a self-contained runnable artifact with CFR included.
 
 ## Quick Start
 
 Decompile a WAR and only keep classes under `com.example`:
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example
+java -jar target/cfr-selective-dec.jar --input app.war --output out --packages com.example
 ```
 
 Decompile a directory tree and include every class:
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input ./build-output --output out
+java -jar target/cfr-selective-dec.jar --input ./build-output --output out
 ```
 
 Decompile multiple package prefixes:
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.jar --output out --packages com.foo,org.demo
+java -jar target/cfr-selective-dec.jar --input app.jar --output out --packages com.foo,org.demo
 ```
 
 ## Usage
@@ -66,13 +65,13 @@ java -jar target/cfr-selective-dec-standalone.jar --input app.jar --output out -
 Named arguments:
 
 ```text
-java -jar cfr-selective-dec-standalone.jar --input <path> --output <dir> [--packages <prefixes>] [options]
+java -jar cfr-selective-dec.jar --input <path> --output <dir> [--packages <prefixes>] [options]
 ```
 
 Positional arguments:
 
 ```text
-java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <output-dir> [package-prefixes...] [options]
+java -jar cfr-selective-dec.jar <input.jar|input.war|input-dir> <output-dir> [package-prefixes...] [options]
 ```
 
 ### Options
@@ -101,7 +100,7 @@ com/foo
 When using positional arguments, package prefixes can also be separated by spaces:
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar app.jar out com.foo org.bar
+java -jar target/cfr-selective-dec.jar app.jar out com.foo org.bar
 ```
 
 If `--packages` and positional package prefixes are omitted, all matching `.class` files are decompiled.
@@ -111,7 +110,7 @@ If `--packages` and positional package prefixes are omitted, all matching `.clas
 Use `--output-encoding` when auditing projects that need a non-UTF-8 source encoding:
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar app.jar out com.example --output-encoding GB18030
+java -jar target/cfr-selective-dec.jar app.jar out com.example --output-encoding GB18030
 ```
 
 ### Debugging
@@ -119,13 +118,13 @@ java -jar target/cfr-selective-dec-standalone.jar app.jar out com.example --outp
 Use `--debug` to print full stack traces and internal debug messages:
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --debug
+java -jar target/cfr-selective-dec.jar --input app.war --output out --debug
 ```
 
 Use `--keep-temp` when you need to inspect extracted nested archives:
 
 ```bash
-java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --keep-temp
+java -jar target/cfr-selective-dec.jar --input app.war --output out --keep-temp
 ```
 
 ## How It Works
@@ -136,7 +135,7 @@ java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out -
 4. Remove duplicate tasks that would produce the same final `.java` file.
 5. Decompile classes in groups of `128`.
 6. Check the output directory for non-empty `.java` files after each batch.
-7. Requeue classes without output until a full round makes no progress.
+7. Requeue classes without output and split failed batches down to single classes before permanent failure.
 
 ## Summary Report
 
