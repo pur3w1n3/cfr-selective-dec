@@ -1,190 +1,179 @@
 # cfr-selective-dec
 
-基于 CFR 的批量反编译工具，用于本地代码审计。它会先按包名前缀筛选 class，再生成临时过滤 jar 交给内置 CFR 反编译，避免把大型应用里的全部依赖源码一次性展开。
+Languages: [English](README.md) | [简体中文](README.zh-CN.md)
 
-## 功能
+A CFR-based batch decompiler for local Java auditing. It scans `.jar`, `.war`, class directories, and nested archives, filters classes by package prefix, then decompiles them in fixed-size batches with cache-aware retries.
 
-- 支持输入单个 `.jar`、`.war`。
-- 支持输入目录，并递归扫描目录里的 `.jar`、`.war` 和 `.class`。
-- 支持一个或多个包名前缀，例如 `com.foo,org.bar`；未提供时默认反编译全部 class。
-- WAR 会按层处理：
+## Features
+
+- Decompile a single `.jar`, `.war`, classes directory, or a directory tree containing archives and `.class` files.
+- Filter targets by one or more package prefixes, or omit filters to decompile every class.
+- Handle common archive layouts:
   - `WEB-INF/classes`
   - `WEB-INF/lib/*.jar`
-- Spring Boot fat jar 会按层处理：
   - `BOOT-INF/classes`
   - `BOOT-INF/lib/*.jar`
-- 遇到嵌套 `jar/war` 会逐级抽取、逐级筛选、逐级反编译。
-- 默认传给 CFR：`--hideutf false --outputencoding UTF-8`。
-- 可通过 `--output-encoding GB18030` 等参数改变 `.java` 输出编码。
+- Recursively extract and process nested `.jar` and `.war` files.
+- Process classes in groups of `128` using a thread pool sized to the available CPU count.
+- Reuse existing non-empty `.java` outputs as cache hits.
+- Retry classes that did not produce output; if a full round produces no new files, remaining classes are reported as failed.
+- Skip duplicate classes that map to the same final `.java` path and record them in `summary.txt`.
+- Write `manifest.txt` with one source mapping for each generated `.java` file.
+- Use CFR with `--hideutf false` and UTF-8 output by default.
 
-## 安全加固
+## Requirements
 
-工具会处理不可信的 jar/war，因此做了以下防护：
+- JDK 8 or newer.
+- Maven 3.6 or newer.
 
-- 不把压缩包内容直接解压到输出目录，只复制匹配 class 或嵌套归档到随机临时目录。
-- 校验压缩包 entry name，拒绝绝对路径、盘符路径、空路径、`.`、`..`、空路径段和 NUL 字符，避免 Zip Slip。
-- 临时过滤 jar 中的 entry name 也会再次校验。
-- 默认异常只打印简要错误，使用 `--debug` 才打印完整堆栈。
-- 复制使用固定缓冲区流式处理，不把大文件整体读入内存。
+## Build
 
-说明：当前不设置固定的项目规模上限，避免误伤大型项目。只要磁盘和 CPU 能承受，就会继续处理。
+```bash
+mvn clean package
+```
 
-## 项目结构
+The build produces:
 
 ```text
-src/main/java/com/aq/cfrselect/
-  Main.java                         # 程序入口
-  archive/ArchiveNames.java         # 归档命名、entry name 校验
-  cli/CliOptions.java               # 命令行参数解析
-  cli/UsagePrinter.java             # 中英文帮助
-  cli/UsageException.java           # 参数错误
-  core/SelectiveDecompiler.java     # 扫描、筛选、调用 CFR
-  io/IoUtils.java                   # 流复制、临时目录清理
-  matching/PackageMatcher.java      # 包名前缀匹配
-  model/ClassFileMatch.java         # class 匹配结果
-  model/FilterResult.java           # 临时过滤 jar 结果
-third_party/cfr/src/                # 内置 CFR 源码
+target/cfr-selective-dec-standalone.jar
+target/cfr-selective-dec.jar
 ```
 
-构建产物目录：
+Both jars are runnable; `cfr-selective-dec.jar` is a convenience copy of the standalone jar.
+
+## Quick Start
+
+Decompile a WAR and only keep classes under `com.example`:
+
+```bash
+java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example
+```
+
+Decompile a directory tree and include every class:
+
+```bash
+java -jar target/cfr-selective-dec-standalone.jar --input ./build-output --output out
+```
+
+Decompile multiple package prefixes:
+
+```bash
+java -jar target/cfr-selective-dec-standalone.jar --input app.jar --output out --packages com.foo,org.demo
+```
+
+## Usage
+
+Named arguments:
 
 ```text
-build/
-dist/
+java -jar cfr-selective-dec-standalone.jar --input <path> --output <dir> [--packages <prefixes>] [options]
 ```
 
-## 构建
-
-要求：
-
-- JDK 8 或更高版本。
-- 推荐设置 `JAVA_HOME` 指向 JDK；或者确保 `javac`、`jar`、`java` 在 `PATH` 中。
-
-构建：
-
-```bat
-build.bat
-```
-
-产物：
+Positional arguments:
 
 ```text
-dist\cfr-selective-dec-standalone.jar
-dist\cfr-selective-dec.jar
+java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <output-dir> [package-prefixes...] [options]
 ```
 
-两个 jar 内容相同，`cfr-selective-dec.jar` 只是便捷别名。
+### Options
 
-## 发布
+| Option | Description |
+| --- | --- |
+| `-i, --input <path>` | Input `.jar`, `.war`, classes directory, or directory tree to scan. |
+| `-o, --output <dir>` | Directory for generated `.java` files, `summary.txt`, and `manifest.txt`. |
+| `-p, --packages <prefixes>` | Optional package prefixes. Use commas or semicolons to separate multiple prefixes. |
+| `--output-encoding <charset>` | Output encoding for `.java` files. Default: `UTF-8`. |
+| `--keep-temp` | Keep temporary extracted archives for troubleshooting. |
+| `--debug` | Print full exception stack traces and debug logs. |
+| `-h, --help` | Show command help. |
 
-推送 tag 后会自动触发 GitHub Actions，执行 `build.bat`，并基于当前 tag 创建 GitHub Release，同时上传以下产物：
+### Package Filters
 
-```text
-dist\cfr-selective-dec-standalone.jar
-dist\cfr-selective-dec.jar
-```
-
-示例：
-
-```bat
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-## 使用
-
-位置参数：
-
-```bat
-java -jar dist\cfr-selective-dec-standalone.jar app.war out com.example
-java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example,org.demo
-java -jar dist\cfr-selective-dec-standalone.jar app-dir out com.example
-java -jar dist\cfr-selective-dec-standalone.jar app.war out
-```
-
-命名参数：
-
-```bat
-java -jar dist\cfr-selective-dec-standalone.jar --input app.war --output out --packages com.example,org.demo
-java -jar dist\cfr-selective-dec-standalone.jar --input app-dir --output out --packages com.example
-java -jar dist\cfr-selective-dec-standalone.jar --input app.war --output out
-```
-
-指定输出编码：
-
-```bat
-java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example --output-encoding GB18030
-```
-
-打印完整异常堆栈：
-
-```bat
-java -jar dist\cfr-selective-dec-standalone.jar app.jar out com.example --debug
-```
-
-使用运行脚本：
-
-```bat
-run.bat app.war out
-```
-
-## 参数说明
-
-```text
-java -jar cfr-selective-dec-standalone.jar <input.jar|input.war|input-dir> <output-dir> [<package1[,package2]> [packageN...]] [options]
-```
-
-- 第一个参数：输入的 `.jar`、`.war` 或目录。
-- 第二个参数：反编译输出目录。
-- 第三个及后续参数：包名前缀；留空时默认反编译全部 class。
-- `--output-encoding <charset>`：输出 `.java` 文件编码，默认 `UTF-8`。
-- `--keep-temp`：保留临时过滤 jar 和嵌套归档副本，便于排查。
-- `--debug`：打印完整异常堆栈。
-
-包名支持逗号、分号或空格分隔：
+Package prefixes accept dot or slash notation:
 
 ```text
 com.foo
 com.foo,org.bar
 com.foo;org.bar
-com.foo org.bar
+com/foo
 ```
 
-## 输出结构
+When using positional arguments, package prefixes can also be separated by spaces:
 
-输出目录会按来源分层保存。例如输入 `app.war`：
+```bash
+java -jar target/cfr-selective-dec-standalone.jar app.jar out com.foo org.bar
+```
+
+If `--packages` and positional package prefixes are omitted, all matching `.class` files are decompiled.
+
+### Encoding
+
+Use `--output-encoding` when auditing projects that need a non-UTF-8 source encoding:
+
+```bash
+java -jar target/cfr-selective-dec-standalone.jar app.jar out com.example --output-encoding GB18030
+```
+
+### Debugging
+
+Use `--debug` to print full stack traces and internal debug messages:
+
+```bash
+java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --debug
+```
+
+Use `--keep-temp` when you need to inspect extracted nested archives:
+
+```bash
+java -jar target/cfr-selective-dec-standalone.jar --input app.war --output out --keep-temp
+```
+
+## How It Works
+
+1. Scan the input path for `.class`, `.jar`, and `.war` files.
+2. Normalize archive layouts such as `WEB-INF/classes` and `BOOT-INF/classes`.
+3. Filter class entries by package prefix.
+4. Remove duplicate tasks that would produce the same final `.java` file.
+5. Decompile classes in groups of `128`.
+6. Check the output directory for non-empty `.java` files after each batch.
+7. Requeue classes without output until a full round makes no progress.
+
+## Summary Report
+
+Each run writes `summary.txt` to the output directory. It includes:
+
+- `group_size`: batch size used by the queue.
+- `queue_tasks`: number of batch tasks submitted.
+- `success`: classes with generated or cached `.java` output.
+- `failed`: classes left unresolved after retries.
+- `completed`: classes that reached a terminal state.
+- `total`: unique class tasks after duplicate removal.
+- `duplicates_skipped`: duplicate class tasks skipped before decompilation.
+- `failed_classes`: unresolved class list.
+- `duplicate_classes`: skipped duplicates and the retained source.
+
+## Manifest
+
+Each run writes `manifest.txt` to the output directory. Each line maps a generated Java class to the source class location used for decompilation:
 
 ```text
-out/
-  app/
-    WEB-INF/
-      classes/
-      lib/
-    nested/
+com.example.Main /path/to/app.jar!com.example.Main
+com.example.Main1 /path/to/com/example/Main1.class
 ```
 
-输入目录时会保留相对输入目录的原始结构。例如：
+Only classes with an existing non-empty `.java` output are included. Duplicate classes skipped during task collection are not listed separately; the retained source is used.
 
-```text
-input/
-  target/classes/com/demo/App.class
-  lib/a.jar
+## Security Notes
 
-out/
-  input/
-    target/classes/com/demo/App.java
-    lib/a/com/demo/FromJar.java
-```
+The tool handles untrusted archives defensively:
 
-## 第三方声明
+- Archive entry names are validated to reject absolute paths, drive-letter paths, empty path segments, `.`, `..`, and NUL characters.
+- Nested archives are copied to random temporary paths before processing.
+- Generated source files are written only under the configured output directory.
+- Large files are copied with fixed-size buffers instead of loading them fully into memory.
 
-本项目内置 CFR 源码，位于 `third_party/cfr`。
+## Third-party Notices
 
-CFR 使用 MIT License，详见：
+This project uses [CFR](https://www.benf.org/other/cfr/) through Maven.
 
-- `third_party/cfr/LICENSE`
-- `THIRD_PARTY_NOTICES.md`
-
-## 更新说明
-
-- 添加workflow自动编译
+CFR is distributed under the MIT License. See `THIRD_PARTY_NOTICES.md`.

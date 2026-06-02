@@ -1,0 +1,25 @@
+# Changelog
+
+All notable changes are listed with the newest version first.
+
+## 1.0.2-alpha
+
+- Replaced class risk classification with a fixed-size queue decompilation model.
+- Added batch groups of 128 classes and a worker pool sized to available CPU cores.
+- Added cache checks for existing non-empty `.java` outputs before and after batch decompilation.
+- Added retry rounds for classes that do not produce output; remaining classes are marked failed when a full round makes no progress.
+- Added duplicate task detection by final `.java` output path and recorded skipped duplicates in `summary.txt`.
+- Added `manifest.txt` generation to map generated Java classes back to source class locations.
+- Fixed concurrent writes to the same output file with per-target output locks.
+- Removed `--classify-only`, risk classification code, ASM dependency, stale status/progress code, and unused model classes.
+- Added unit tests for archive name validation, CLI parsing, package matching, and task collection deduplication.
+- Reworked README into standard GitHub-style English and Simplified Chinese documentation.
+- Removed Windows `.bat` scripts and changed release workflow builds to use Maven directly.
+- Added manual GitHub release workflow support.
+
+## 1.0.0-SNAPSHOT
+
+- Initial CFR-based selective batch decompiler.
+- Supported `.jar`, `.war`, directories, nested archives, Spring Boot layouts, and WAR layouts.
+- Supported package-prefix filtering and configurable output encoding.
+- Added archive entry validation and temporary extraction safeguards.

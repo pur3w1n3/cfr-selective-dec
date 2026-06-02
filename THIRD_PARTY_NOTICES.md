@@ -1,9 +1,8 @@
 # Third Party Notices
 
-This project vendors CFR source code under `third_party/cfr`.
+This project uses CFR via Maven dependency.
 
 CFR is licensed under the MIT License. See:
 
-- `third_party/cfr/LICENSE`
-- `third_party/cfr/README-CFR.md`
-
+- Maven coordinates: `org.benf:cfr`
+- Upstream project: <https://www.benf.org/other/cfr/>
