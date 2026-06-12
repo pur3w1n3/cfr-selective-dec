@@ -16,6 +16,15 @@ final class ZipInputSource implements InputSource {
     }
 
     @Override
+    public InputSource sibling(String siblingEntryName) {
+        try (ZipFile zf = new ZipFile(archive.toFile())) {
+            return zf.getEntry(siblingEntryName) != null ? new ZipInputSource(archive, siblingEntryName) : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    @Override
     public InputStream open() throws IOException {
         final ZipFile zipFile = new ZipFile(archive.toFile());
         final ZipEntry entry = zipFile.getEntry(entryName);

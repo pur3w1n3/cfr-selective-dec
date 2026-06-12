@@ -247,14 +247,42 @@ final class SelectiveDecompilerExecutor {
                     debug("skip duplicate batch entry: " + task.entryName);
                     continue;
                 }
-                JarEntry entry = new JarEntry(task.entryName);
-                out.putNextEntry(entry);
+                out.putNextEntry(new JarEntry(task.entryName));
                 try (InputStream in = task.inputSource.open()) {
                     copy(in, out);
                 }
                 out.closeEntry();
+
+                for (String outerEntry : outerEntryNames(task.entryName)) {
+                    if (!seenEntries.add(outerEntry)) continue;
+                    InputSource outerSource = task.inputSource.sibling(outerEntry);
+                    if (outerSource == null) {
+                        debug("outer class not found: " + outerEntry);
+                        continue;
+                    }
+                    out.putNextEntry(new JarEntry(outerEntry));
+                    try (InputStream in = outerSource.open()) {
+                        copy(in, out);
+                    }
+                    out.closeEntry();
+                }
             }
         }
+    }
+
+    private static List<String> outerEntryNames(String entryName) {
+        List<String> result = new ArrayList<String>();
+        String current = entryName;
+        while (true) {
+            int slash = current.lastIndexOf('/');
+            String simple = slash >= 0 ? current.substring(slash + 1) : current;
+            int lastDollar = simple.lastIndexOf('$');
+            if (lastDollar < 0) break;
+            String pkg = slash >= 0 ? current.substring(0, slash + 1) : "";
+            current = pkg + simple.substring(0, lastDollar) + ".class";
+            result.add(current);
+        }
+        return result;
     }
 
     private boolean validateBatchOutputs(List<DecompileTask> group, Path outputRoot) {

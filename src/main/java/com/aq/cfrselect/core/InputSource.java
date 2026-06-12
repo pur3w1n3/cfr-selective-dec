@@ -5,4 +5,8 @@ import java.io.InputStream;
 
 interface InputSource {
     InputStream open() throws IOException;
+
+    default InputSource sibling(String siblingEntryName) {
+        return null;
+    }
 }
