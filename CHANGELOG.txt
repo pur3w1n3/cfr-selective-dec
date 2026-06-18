@@ -2,6 +2,36 @@
 
 All notable changes are listed with the newest version first.
 
+## 1.0.3
+
+### Performance / 性能优化
+
+- **ZipFile pool**: Introduced `ZipFilePool` with reference counting to reuse open `ZipFile` handles across batch tasks, eliminating repeated central directory reads. This is the single biggest performance improvement, especially for large archives with many classes.
+- **Entry name index**: Built a `Map<String, ZipInputSource>` index at startup for O(1) outer class resolution, replacing the previous O(N) linear scan across all archives with `new ZipFile()` per lookup.
+- **Merged directory walk**: Combined two `Files.walk()` calls in `processDirectory()` into a single pass, reducing filesystem traversal overhead.
+- **IO buffer increase**: Raised stream copy buffer from 8 KB to 32 KB in both `SelectiveDecompilerExecutor.copy()` and `IoUtils.copy()`, reducing system call overhead.
+- **walkFileTree delete**: Replaced `deleteRecursively()` full-path-list approach with `Files.walkFileTree()` streaming deletion, avoiding memory spikes for large temp directories.
+- **Progress reporting**: Added `progress=completed/total percentage%` to each queue-round log line for real-time monitoring.
+
+  **ZipFile 连接池**：引入带引用计数的 `ZipFilePool`，在批处理任务间复用打开的 `ZipFile` 句柄，避免重复读取中央目录。这是最大的性能提升，对包含大量类的大归档尤其明显。
+  **条目名索引**：启动时构建 `Map<String, ZipInputSource>` 索引，将外部类查找从 O(N) 线性扫描优化为 O(1)，消除了每次查找都 `new ZipFile()` 的开销。
+  **合并目录遍历**：将 `processDirectory()` 中的两次 `Files.walk()` 合并为单次遍历，减少文件系统遍历开销。
+  **IO 缓冲区提升**：流拷贝缓冲区从 8 KB 提升至 32 KB，减少系统调用次数。
+  **walkFileTree 删除**：`deleteRecursively()` 从全路径收集后删除改为 `Files.walkFileTree()` 流式删除，避免大临时目录下的内存尖峰。
+  **进度报告**：每轮队列日志增加 `progress=已完成/总数 百分比%`，便于实时监控。
+
+### Code Quality / 代码质量
+
+- **Unified utility methods**: Extracted `toJavaEntry()`, `toClassName()`, `copyStream()` into `DecompileUtils`, removing duplicate implementations across `SelectiveDecompiler`, `SelectiveDecompilerExecutor`, `DecompileTask`, and `SelectiveDecompilerTaskCollector`.
+- **Removed redundant sort**: Removed the duplicate sort inside `deduplicateByOutputTarget()` since `collect()` already sorts the result.
+- **Output lock grouping**: Changed `outputLocks` to group by parent directory instead of individual file path, reducing lock object count while maintaining correctness.
+- **AtomicLong for nested extraction**: Replaced `System.nanoTime()` with `AtomicLong` counter for nested archive temp file naming, eliminating high-concurrency collision risk.
+
+  **统一工具方法**：将 `toJavaEntry()`、`toClassName()`、`copyStream()` 提取到 `DecompileUtils`，消除了 `SelectiveDecompiler`、`SelectiveDecompilerExecutor`、`DecompileTask`、`SelectiveDecompilerTaskCollector` 中的重复实现。
+  **移除冗余排序**：移除 `deduplicateByOutputTarget()` 内部的重复排序，因为 `collect()` 已对结果排序。
+  **输出锁分组**：`outputLocks` 改为按父目录分组而非按文件路径，减少锁对象数量，同时保持正确性。
+  **AtomicLong 命名**：嵌套归档临时文件命名从 `System.nanoTime()` 改为 `AtomicLong` 计数器，消除高并发冲突风险。
+
 ## 1.0.2
 
 - Replaced class risk classification with a fixed-size queue decompilation model.

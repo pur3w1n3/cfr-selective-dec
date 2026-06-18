@@ -21,6 +21,15 @@ A CFR-based batch decompiler for local Java auditing. It scans `.jar`, `.war`, c
 - Write `manifest.txt` with one source mapping for each generated `.java` file.
 - Use CFR with `--hideutf false` and UTF-8 output by default.
 
+### Performance (1.0.3+)
+
+- **ZipFile pool** — reuses open `ZipFile` handles across batch tasks via reference counting, eliminating repeated central directory reads.
+- **Entry name index** — pre-built `Map<String, ZipInputSource>` enables O(1) outer class lookup instead of scanning all archives.
+- **Single-pass directory walk** — merged two `Files.walk()` calls into one pass when scanning directories.
+- **32 KB IO buffers** — stream copy buffers increased from 8 KB to 32 KB.
+- **Streaming recursive delete** — `Files.walkFileTree()` replaces full-path-list collection.
+- **Progress reporting** — each queue round prints `progress=completed/total percentage%`.
+
 ## Requirements
 
 - JDK 8 or newer.

@@ -21,6 +21,15 @@
 - 会生成 `manifest.txt`，记录每个已生成 `.java` 文件对应的来源 class。
 - 默认 CFR 参数为 `--hideutf false`，输出编码默认为 UTF-8。
 
+### 性能优化（1.0.3+）
+
+- **ZipFile 连接池** — 通过引用计数在批处理任务间复用 `ZipFile` 句柄，避免重复读取 ZIP 中央目录。
+- **条目名索引** — 启动时预构建 `Map<String, ZipInputSource>` 索引，外部类查找从 O(N) 优化为 O(1)。
+- **单次目录遍历** — 将 `processDirectory()` 中的两次 `Files.walk()` 合并为单次遍历。
+- **32 KB IO 缓冲区** — 流拷贝缓冲区从 8 KB 提升至 32 KB。
+- **流式递归删除** — `Files.walkFileTree()` 替代全路径收集后删除。
+- **进度报告** — 每轮队列输出 `progress=已完成/总数 百分比%`。
+
 ## 环境要求
 
 - JDK 8 或更高版本。
