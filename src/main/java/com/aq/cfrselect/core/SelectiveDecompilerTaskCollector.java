@@ -84,23 +84,30 @@ final class SelectiveDecompilerTaskCollector {
 
     private void processDirectory(Path inputDir, Path outputDir, List<DecompileTask> tasks)
             throws IOException, InterruptedException {
-        List<Path> paths;
+        // Single walk: collect both .class files and supported archives in one pass
+        List<Path> classFilesRaw = new ArrayList<Path>();
+        List<Path> archives = new ArrayList<Path>();
         try (Stream<Path> walk = Files.walk(inputDir)) {
-            paths = walk
-                    .filter(new java.util.function.Predicate<Path>() {
-                        @Override
-                        public boolean test(Path path) {
-                            return Files.isRegularFile(path)
-                                    && !isUnderOutput(path)
-                                    && path.getFileName().toString().toLowerCase().endsWith(".class");
-                        }
-                    })
-                    .sorted()
-                    .collect(Collectors.toList());
+            walk.forEach(new java.util.function.Consumer<Path>() {
+                @Override
+                public void accept(Path path) {
+                    if (!Files.isRegularFile(path) || isUnderOutput(path)) {
+                        return;
+                    }
+                    String name = path.getFileName().toString().toLowerCase();
+                    if (name.endsWith(".class")) {
+                        classFilesRaw.add(path);
+                    } else if (ArchiveNames.isSupportedTopLevelArchive(path)) {
+                        archives.add(path);
+                    }
+                }
+            });
         }
+        Collections.sort(classFilesRaw);
+        Collections.sort(archives);
 
         List<ClassFileMatch> classFiles = new ArrayList<ClassFileMatch>();
-        for (Path path : paths) {
+        for (Path path : classFilesRaw) {
             ClassFileMatch match = matcher.matchClassFile(inputDir, path);
             if (match != null) {
                 classFiles.add(match);
@@ -116,21 +123,6 @@ final class SelectiveDecompilerTaskCollector {
             tasks.add(new DecompileTask(displayName, taskOutputDir, classFile.entryName,
                     classFile.path.toAbsolutePath().normalize().toString(),
                     new DirectoryInputSource(classFile.path)));
-        }
-
-        List<Path> archives;
-        try (Stream<Path> walk = Files.walk(inputDir)) {
-            archives = walk
-                    .filter(new java.util.function.Predicate<Path>() {
-                        @Override
-                        public boolean test(Path path) {
-                            return Files.isRegularFile(path)
-                                    && !isUnderOutput(path)
-                                    && ArchiveNames.isSupportedTopLevelArchive(path);
-                        }
-                    })
-                    .sorted()
-                    .collect(Collectors.toList());
         }
 
         for (Path archive : archives) {
