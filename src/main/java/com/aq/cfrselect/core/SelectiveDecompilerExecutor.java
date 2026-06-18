@@ -428,12 +428,15 @@ final class SelectiveDecompilerExecutor {
     }
 
     private Object outputLock(Path target) {
-        Object existing = outputLocks.get(target);
+        // Group locks by parent directory to reduce lock object count
+        // while still preventing concurrent writes to the same directory
+        Path lockKey = target.getParent();
+        Object existing = outputLocks.get(lockKey);
         if (existing != null) {
             return existing;
         }
         Object created = new Object();
-        Object previous = outputLocks.putIfAbsent(target, created);
+        Object previous = outputLocks.putIfAbsent(lockKey, created);
         return previous == null ? created : previous;
     }
 
@@ -519,7 +522,7 @@ final class SelectiveDecompilerExecutor {
     }
 
     private static void copy(InputStream in, OutputStream out) throws IOException {
-        byte[] buffer = new byte[8192];
+        byte[] buffer = new byte[32768];
         int read;
         while ((read = in.read(buffer)) != -1) {
             out.write(buffer, 0, read);

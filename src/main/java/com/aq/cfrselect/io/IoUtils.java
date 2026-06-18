@@ -3,19 +3,18 @@ package com.aq.cfrselect.io;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 
 public final class IoUtils {
     private IoUtils() {
     }
 
     public static long copy(InputStream in, OutputStream out) throws IOException {
-        byte[] buffer = new byte[8192];
+        byte[] buffer = new byte[32768];
         long total = 0;
         int read;
         while ((read = in.read(buffer)) != -1) {
@@ -29,17 +28,19 @@ public final class IoUtils {
         if (root == null || !Files.exists(root)) {
             return;
         }
-
-        try (Stream<Path> walk = Files.walk(root)) {
-            List<Path> paths = walk.sorted(new Comparator<Path>() {
-                @Override
-                public int compare(Path a, Path b) {
-                    return b.compareTo(a);
-                }
-            }).collect(Collectors.toList());
-            for (Path path : paths) {
-                Files.deleteIfExists(path);
+        Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
             }
-        }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                if (exc != null) throw exc;
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 }
