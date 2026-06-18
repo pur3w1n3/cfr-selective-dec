@@ -139,6 +139,9 @@ final class SelectiveDecompilerExecutor {
             pending.add(task);
         }
 
+        int totalTasks = tasks.size();
+        int completedTotal = totalTasks - pending.size();
+
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         try {
             int round = 0;
@@ -148,7 +151,9 @@ final class SelectiveDecompilerExecutor {
                 List<List<DecompileTask>> groups = partition(pending, batchSize);
                 summary.totalQueueTasks.addAndGet(groups.size());
                 logInfo("[queue-round] round=" + round + " groups=" + groups.size()
-                        + " pending=" + pending.size() + " groupSize=" + batchSize);
+                        + " pending=" + pending.size() + " groupSize=" + batchSize
+                        + " progress=" + completedTotal + "/" + totalTasks
+                        + " " + (totalTasks > 0 ? (completedTotal * 100 / totalTasks) : 0) + "%");
 
                 List<Future<BatchResult>> futures = new ArrayList<Future<BatchResult>>(groups.size());
                 for (List<DecompileTask> group : groups) {
@@ -167,6 +172,8 @@ final class SelectiveDecompilerExecutor {
                     producedThisRound += result.produced;
                     nextPending.addAll(result.remaining);
                 }
+
+                completedTotal += producedThisRound;
 
                 if (nextPending.isEmpty()) {
                     break;
@@ -518,15 +525,11 @@ final class SelectiveDecompilerExecutor {
     }
 
     private static String toJavaEntry(String entryName) {
-        return entryName.substring(0, entryName.length() - ".class".length()) + ".java";
+        return DecompileUtils.toJavaEntry(entryName);
     }
 
     private static void copy(InputStream in, OutputStream out) throws IOException {
-        byte[] buffer = new byte[32768];
-        int read;
-        while ((read = in.read(buffer)) != -1) {
-            out.write(buffer, 0, read);
-        }
+        DecompileUtils.copyStream(in, out);
     }
 
     private final class GroupCallable implements Callable<BatchResult> {

@@ -15,13 +15,9 @@ final class DecompileTask {
         this.displayName = displayName;
         this.outputDir = outputDir;
         this.entryName = entryName;
-        this.className = toClassName(entryName);
+        this.className = DecompileUtils.toClassName(entryName);
         this.sourceLocation = sourceLocation;
         this.inputSource = inputSource;
     }
 
-    private static String toClassName(String entryName) {
-        String withoutSuffix = entryName.substring(0, entryName.length() - ".class".length());
-        return withoutSuffix.replace('/', '.').replace('\\', '.');
-    }
 }

@@ -22,7 +22,10 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 final class SelectiveDecompilerTaskCollector {
+    private static final AtomicLong nestedSeq = new AtomicLong();
     private final CliOptions options;
     private final PackageMatcher matcher;
     private final Path tempRoot;
@@ -56,13 +59,6 @@ final class SelectiveDecompilerTaskCollector {
     }
 
     private List<DecompileTask> deduplicateByOutputTarget(List<DecompileTask> tasks) {
-        Collections.sort(tasks, new Comparator<DecompileTask>() {
-            @Override
-            public int compare(DecompileTask a, DecompileTask b) {
-                return a.displayName.compareTo(b.displayName);
-            }
-        });
-
         Map<String, DecompileTask> unique = new LinkedHashMap<String, DecompileTask>();
         for (DecompileTask task : tasks) {
             String key = outputTargetKey(task);
@@ -78,7 +74,7 @@ final class SelectiveDecompilerTaskCollector {
     }
 
     private String outputTargetKey(DecompileTask task) {
-        String javaEntry = task.entryName.substring(0, task.entryName.length() - ".class".length()) + ".java";
+        String javaEntry = DecompileUtils.toJavaEntry(task.entryName);
         return task.outputDir.resolve(javaEntry).toAbsolutePath().normalize().toString();
     }
 
@@ -170,7 +166,7 @@ final class SelectiveDecompilerTaskCollector {
                     continue;
                 }
                 tasks.add(new DecompileTask(displayName + "!" + mapped, outputDir, mapped,
-                        sourceArchiveLabel + "!" + toClassName(mapped),
+                        sourceArchiveLabel + "!" + DecompileUtils.toClassName(mapped),
                         new ZipInputSource(jarFile, entryName)));
             }
         }
@@ -215,20 +211,15 @@ final class SelectiveDecompilerTaskCollector {
 
                 tasks.add(new DecompileTask("WEB-INF/classes!" + mapped,
                         outputDir.resolve("WEB-INF").resolve("classes"), mapped,
-                        sourceArchiveLabel + "!" + toClassName(mapped),
+                        sourceArchiveLabel + "!" + DecompileUtils.toClassName(mapped),
                         new ZipInputSource(warFile, name)));
             }
         }
     }
 
-    private static String toClassName(String entryName) {
-        String withoutSuffix = entryName.substring(0, entryName.length() - ".class".length());
-        return withoutSuffix.replace('/', '.').replace('\\', '.');
-    }
-
     private Path extractNested(ZipFile zip, ZipEntry entry) throws IOException {
         String fileName = ArchiveNames.safeArchiveOutputName(entry.getName());
-        Path target = tempRoot.resolve("nested").resolve(System.nanoTime() + "-" + fileName);
+        Path target = tempRoot.resolve("nested").resolve(nestedSeq.incrementAndGet() + "-" + fileName);
         Files.createDirectories(target.getParent());
         try (InputStream in = zip.getInputStream(entry)) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
