@@ -38,6 +38,10 @@ final class SelectiveDecompilerExecutor {
     private final Object logLock = new Object();
     private final ConcurrentMap<Path, Object> outputLocks = new ConcurrentHashMap<Path, Object>();
     private final AtomicLong taskSequence = new AtomicLong();
+    private List<Path> allArchives = new ArrayList<Path>();
+    private ZipFilePool zipPool;
+    /** Entry name index: maps normalized entry names to ZipInputSource for O(1) outer class lookup. */
+    private Map<String, ZipInputSource> entryIndex;
 
     private enum TaskOutcome {
         SUCCEEDED,
@@ -109,6 +113,20 @@ final class SelectiveDecompilerExecutor {
     }
 
     void runQueues(List<DecompileTask> tasks) throws IOException, InterruptedException {
+        // Collect all unique jar archives across all tasks for cross-jar outer class lookup
+        Set<Path> archives = new HashSet<Path>();
+        for (DecompileTask task : tasks) {
+            if (task.inputSource instanceof ZipInputSource) {
+                archives.add(((ZipInputSource) task.inputSource).archive);
+            }
+        }
+        allArchives = new ArrayList<Path>(archives);
+
+        // Initialize the shared ZipFile pool to avoid repeated central directory reads
+        zipPool = new ZipFilePool();
+        // Build an entry-name index for O(1) outer class lookup across all archives
+        entryIndex = buildEntryIndex(allArchives);
+
         int threadCount = Math.max(1, Runtime.getRuntime().availableProcessors());
         System.out.println("Queue executor: groupSize=" + GROUP_SIZE + " threads=" + threadCount
                 + " total=" + tasks.size());
@@ -171,7 +189,67 @@ final class SelectiveDecompilerExecutor {
             if (!executor.awaitTermination(1, TimeUnit.MINUTES)) {
                 executor.shutdownNow();
             }
+            // Release all pooled ZipFile resources
+            zipPool.close();
         }
+    }
+
+    /**
+     * Build a lookup index mapping normalized entry names to ZipInputSource entries.
+     * This enables O(1) outer class resolution instead of scanning all archives.
+     */
+    private Map<String, ZipInputSource> buildEntryIndex(List<Path> archives) {
+        Map<String, ZipInputSource> index = new HashMap<String, ZipInputSource>();
+        for (Path archive : archives) {
+            try (ZipFilePool.PooledZipFile pzf = zipPool.acquire(archive)) {
+                java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = pzf.entries();
+                while (entries.hasMoreElements()) {
+                    java.util.zip.ZipEntry entry = entries.nextElement();
+                    if (entry.isDirectory()) continue;
+                    String name = ArchiveNames.normalizeZipName(entry.getName());
+                    String mapped = ArchiveNames.mapJarClassEntry(name);
+                    if (mapped.endsWith(".class")) {
+                        index.putIfAbsent(mapped, new ZipInputSource(archive, name));
+                    }
+                }
+            }
+        }
+        return index;
+    }
+
+    /** Open an InputStream from an InputSource, using the ZipFile pool when available. */
+    private InputStream openInputSource(InputSource source) throws IOException {
+        if (source instanceof ZipInputSource && zipPool != null) {
+            return ((ZipInputSource) source).open(zipPool);
+        }
+        return source.open();
+    }
+
+    /**
+     * Find an outer class InputSource using the entry index for O(1) lookup,
+     * falling back to the primary source's sibling method.
+     */
+    private InputSource findOuterClass(InputSource primary, String outerEntry) {
+        // First try the entry index for O(1) cross-archive lookup
+        if (entryIndex != null) {
+            ZipInputSource indexed = entryIndex.get(outerEntry);
+            if (indexed != null) {
+                return indexed;
+            }
+            // Also try common prefixes that may not be in the mapped index
+            String[] prefixed = {"BOOT-INF/classes/" + outerEntry, "WEB-INF/classes/" + outerEntry};
+            for (String candidate : prefixed) {
+                indexed = entryIndex.get(candidate);
+                if (indexed != null) {
+                    return indexed;
+                }
+            }
+        }
+        // Fallback: try sibling in the same archive using pool
+        if (primary instanceof ZipInputSource && zipPool != null) {
+            return ((ZipInputSource) primary).sibling(outerEntry, zipPool);
+        }
+        return primary.sibling(outerEntry);
     }
 
     private BatchResult runGroup(List<DecompileTask> group) throws IOException {
@@ -248,20 +326,20 @@ final class SelectiveDecompilerExecutor {
                     continue;
                 }
                 out.putNextEntry(new JarEntry(task.entryName));
-                try (InputStream in = task.inputSource.open()) {
+                try (InputStream in = openInputSource(task.inputSource)) {
                     copy(in, out);
                 }
                 out.closeEntry();
 
                 for (String outerEntry : outerEntryNames(task.entryName)) {
                     if (!seenEntries.add(outerEntry)) continue;
-                    InputSource outerSource = task.inputSource.sibling(outerEntry);
+                    InputSource outerSource = findOuterClass(task.inputSource, outerEntry);
                     if (outerSource == null) {
                         debug("outer class not found: " + outerEntry);
                         continue;
                     }
                     out.putNextEntry(new JarEntry(outerEntry));
-                    try (InputStream in = outerSource.open()) {
+                    try (InputStream in = openInputSource(outerSource)) {
                         copy(in, out);
                     }
                     out.closeEntry();

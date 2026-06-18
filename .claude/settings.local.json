@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(java:*)",
+      "Bash(unzip:*)",
+      "Bash(mkdir:*)",
+      "Bash(xxd:*)",
+      "Bash(go build:*)"
+    ]
+  }
+}
