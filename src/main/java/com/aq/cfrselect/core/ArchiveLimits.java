@@ -7,7 +7,7 @@ import java.io.OutputStream;
 final class ArchiveLimits {
     static final int MAX_NESTED_DEPTH = 16;
     static final int MAX_NESTED_ARCHIVES = 10_000;
-    static final long MAX_ARCHIVE_ENTRIES = 1_000_000L;
+    static final long MAX_TARGET_CLASSES = 1_000_000L;
     static final long MAX_NESTED_EXTRACTED_BYTES = 8L * 1024L * 1024L * 1024L;
     static final long MAX_CLASS_BYTES = 64L * 1024L * 1024L;
 

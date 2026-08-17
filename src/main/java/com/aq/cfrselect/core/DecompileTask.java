@@ -13,11 +13,6 @@ final class DecompileTask {
     String sourceEntryName;
 
     DecompileTask(String displayName, Path outputDir, String entryName,
-                  String sourceLocation, InputSource inputSource) {
-        this(displayName, outputDir, entryName, sourceLocation, inputSource, null);
-    }
-
-    DecompileTask(String displayName, Path outputDir, String entryName,
                   String sourceLocation, InputSource inputSource, String outerEntryName) {
         this.displayName = displayName;
         this.outputDir = outputDir;

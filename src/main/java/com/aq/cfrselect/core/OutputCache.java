@@ -60,10 +60,6 @@ final class OutputCache {
         }
     }
 
-    boolean isCompleted(DecompileUnit unit) {
-        return completed.contains(unit.outputTarget()) && isNonEmptyFile(unit.outputTarget());
-    }
-
     boolean isCompleted(Path target) {
         Path normalized = target.toAbsolutePath().normalize();
         return completed.contains(normalized) && isNonEmptyFile(normalized);

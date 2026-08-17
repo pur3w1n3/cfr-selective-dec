@@ -2,6 +2,18 @@
 
 All notable changes are listed with the newest version first.
 
+## 1.0.7
+
+- 嵌套 JAR/WAR 改为流式预扫，仅在包含匹配 class 时提取到临时目录。
+- 匹配嵌套包提取后，仍用 `ZipFile` 扫描预扫未列出的嵌套归档，避免流式预扫不完整时漏扫。
+- 删除未保留的嵌套提取文件时归还累计提取字节预算。
+- 嵌套归档数量上限在预扫时计数，而不是仅在提取落地时计数。
+- 流式预扫未读到任何文件条目时，回退为提取后用 `ZipFile` 扫描。
+- 目录中的顶层 JAR/WAR 按 `--threads` 并行扫描；扫描完成后再按 `displayName` 排序，保证输出稳定。
+- 将 100 万上限从归档条目数改为待反编译目标 class 数。
+- 当嵌套或顶层归档无法被 JDK `ZipFile` 打开时，输出 `[warn]` 并跳过该归档，而不是中止整个运行。
+- 规范构建产物命名：薄 jar 为 `cfr-selective-dec-<version>.jar`，含依赖的可运行包为 `cfr-selective-dec-<version>-with-dependencies.jar`。
+
 ## 1.0.6
 
 - 按来源归档或 class 根目录隔离队列分组和临时 classpath，避免不同输入中的同名类共享字节码或生成结果。

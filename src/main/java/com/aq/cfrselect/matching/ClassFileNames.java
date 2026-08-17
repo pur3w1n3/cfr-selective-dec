@@ -12,7 +12,7 @@ final class ClassFileNames {
     private ClassFileNames() {
     }
 
-    public static String readClassEntryName(Path classFile) throws IOException {
+    static String readClassEntryName(Path classFile) throws IOException {
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(classFile)))) {
             if (in.readInt() != CLASS_MAGIC) {
                 throw new IOException("Invalid class file: " + classFile);

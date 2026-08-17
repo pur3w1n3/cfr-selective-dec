@@ -74,6 +74,6 @@ public class DecompileUnitTest {
     private DecompileTask task(Path classRoot, Path output, String entryName, String outerEntry) {
         Path classFile = classRoot.resolve(entryName);
         return new DecompileTask(entryName, output, entryName, classFile.toString(),
-                new DirectoryInputSource(classFile, entryName), outerEntry);
+                new DirectoryInputSource(classFile, entryName, null), outerEntry);
     }
 }

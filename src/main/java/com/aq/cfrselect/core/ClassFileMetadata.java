@@ -10,11 +10,9 @@ import java.io.InputStream;
 final class ClassFileMetadata {
     private static final int CLASS_MAGIC = 0xCAFEBABE;
 
-    final String entryName;
     final String outerEntryName;
 
-    private ClassFileMetadata(String entryName, String outerEntryName) {
-        this.entryName = entryName;
+    private ClassFileMetadata(String outerEntryName) {
         this.outerEntryName = outerEntryName;
     }
 
@@ -30,7 +28,6 @@ final class ClassFileMetadata {
             in.readUnsignedShort();
             int thisClassIndex = in.readUnsignedShort();
             in.readUnsignedShort();
-            String entryName = classEntry(constantPool, thisClassIndex, source);
 
             int interfaceCount = in.readUnsignedShort();
             skipFully(in, interfaceCount * 2L);
@@ -73,8 +70,7 @@ final class ClassFileMetadata {
                     skipFully(in, attributeLength);
                 }
             }
-            return new ClassFileMetadata(entryName,
-                    innerOuter != null ? innerOuter : enclosingOuter);
+            return new ClassFileMetadata(innerOuter != null ? innerOuter : enclosingOuter);
         }
     }
 

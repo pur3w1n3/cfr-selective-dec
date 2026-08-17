@@ -30,9 +30,9 @@ public class SourceWorkspaceTest {
         }
         Path output = temp.newFolder("output").toPath();
         DecompileTask good = new DecompileTask("good", output, "com/acme/Good.class", "good",
-                new ZipInputSource(archive.toPath(), "com/acme/Good.class"));
+                new ZipInputSource(archive.toPath(), "com/acme/Good.class", -1L, -1L, "test"), null);
         DecompileTask missing = new DecompileTask("missing", output, "com/acme/Missing.class", "missing",
-                new ZipInputSource(archive.toPath(), "com/acme/Missing.class"));
+                new ZipInputSource(archive.toPath(), "com/acme/Missing.class", -1L, -1L, "test"), null);
         List<DecompileUnit> units = DecompileUnit.group(Arrays.asList(good, missing));
         Path workspaceRoot = temp.newFolder("workspace").toPath();
         SourceWorkspace workspace = new SourceWorkspace(workspaceRoot, units);

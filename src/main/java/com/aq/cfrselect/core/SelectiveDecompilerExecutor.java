@@ -447,7 +447,7 @@ final class SelectiveDecompilerExecutor {
     }
 
     private boolean hasReusableOutput(DecompileUnit unit) {
-        return outputCache.isCompleted(unit);
+        return outputCache.isCompleted(unit.outputTarget());
     }
 
     private Object outputLock(Path target) {
@@ -542,11 +542,6 @@ final class SelectiveDecompilerExecutor {
     }
 
     private long nextTaskId() { return taskSequence.incrementAndGet(); }
-
-    private void debug(String message) {
-        if (!options.debug) return;
-        synchronized (logLock) { System.err.println("[debug] " + message); }
-    }
 
     private void debug(String message, Throwable t) {
         if (!options.debug) return;

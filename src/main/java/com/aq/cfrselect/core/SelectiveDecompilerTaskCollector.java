@@ -17,25 +17,44 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongUnaryOperator;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.zip.ZipInputStream;
 
 final class SelectiveDecompilerTaskCollector {
     private static final AtomicLong nestedSeq = new AtomicLong();
+    private static final Comparator<DecompileTask> BY_DISPLAY_NAME = new Comparator<DecompileTask>() {
+        @Override
+        public int compare(DecompileTask a, DecompileTask b) {
+            return a.displayName.compareTo(b.displayName);
+        }
+    };
+
     private final CliOptions options;
     private final PackageMatcher matcher;
     private final Path tempRoot;
     private final SelectiveDecompilerSummary summary;
-    private long scannedArchiveEntries;
-    private int nestedArchiveCount;
-    private long nestedExtractedBytes;
+    private final ConcurrentLinkedQueue<DecompileTask> collected = new ConcurrentLinkedQueue<DecompileTask>();
+    private final AtomicLong matchedTargetClasses = new AtomicLong();
+    private final AtomicInteger nestedArchiveCount = new AtomicInteger();
+    private final AtomicLong nestedExtractedBytes = new AtomicLong();
+    private final Object extractLock = new Object();
 
     SelectiveDecompilerTaskCollector(CliOptions options, PackageMatcher matcher,
                                      Path tempRoot, SelectiveDecompilerSummary summary) {
@@ -46,22 +65,18 @@ final class SelectiveDecompilerTaskCollector {
     }
 
     List<DecompileTask> collect() throws IOException, InterruptedException {
-        List<DecompileTask> tasks = new ArrayList<DecompileTask>();
         if (Files.isDirectory(options.input)) {
-            processDirectory(options.input, options.output.resolve(ArchiveNames.sourceName(options.input)), tasks);
+            processDirectory(options.input, options.output.resolve(ArchiveNames.sourceName(options.input)));
         } else {
             processArchive(options.input, options.output, ArchiveNames.sourceName(options.input),
-                    options.input.toAbsolutePath().normalize().toString(), tasks, 0,
-                    archiveFingerprint(options.input));
+                    options.input.toAbsolutePath().normalize().toString(), 0,
+                    archiveFingerprint(options.input), true);
         }
+        List<DecompileTask> tasks = new ArrayList<DecompileTask>(collected);
+        Collections.sort(tasks, BY_DISPLAY_NAME);
         List<DecompileTask> isolatedTasks = isolateOutputNamespaces(tasks);
         List<DecompileTask> uniqueTasks = deduplicateByOutputTarget(isolatedTasks);
-        Collections.sort(uniqueTasks, new Comparator<DecompileTask>() {
-            @Override
-            public int compare(DecompileTask a, DecompileTask b) {
-                return a.displayName.compareTo(b.displayName);
-            }
-        });
+        Collections.sort(uniqueTasks, BY_DISPLAY_NAME);
         summary.matchedClasses.set(uniqueTasks.size());
         return uniqueTasks;
     }
@@ -174,24 +189,20 @@ final class SelectiveDecompilerTaskCollector {
         return task.outputDir.resolve(javaEntry).toAbsolutePath().normalize().toString();
     }
 
-    private void processDirectory(Path inputDir, Path outputDir, List<DecompileTask> tasks)
+    private void processDirectory(Path inputDir, Path outputDir)
             throws IOException, InterruptedException {
-        // Single walk: collect both .class files and supported archives in one pass
         List<Path> classFilesRaw = new ArrayList<Path>();
         List<Path> archives = new ArrayList<Path>();
         try (Stream<Path> walk = Files.walk(inputDir)) {
-            walk.forEach(new java.util.function.Consumer<Path>() {
-                @Override
-                public void accept(Path path) {
-                    if (!Files.isRegularFile(path) || isUnderOutput(path)) {
-                        return;
-                    }
-                    String name = path.getFileName().toString().toLowerCase();
-                    if (name.endsWith(".class")) {
-                        classFilesRaw.add(path);
-                    } else if (ArchiveNames.isSupportedTopLevelArchive(path)) {
-                        archives.add(path);
-                    }
+            walk.forEach(path -> {
+                if (!Files.isRegularFile(path) || isUnderOutput(path)) {
+                    return;
+                }
+                String name = path.getFileName().toString().toLowerCase();
+                if (name.endsWith(".class")) {
+                    classFilesRaw.add(path);
+                } else if (ArchiveNames.isSupportedTopLevelArchive(path)) {
+                    archives.add(path);
                 }
             });
         }
@@ -209,165 +220,425 @@ final class SelectiveDecompilerTaskCollector {
         Collections.sort(classFiles);
 
         for (ClassFileMatch classFile : classFiles) {
+            checkInterrupted();
             String displayName = classFile.rootName.isEmpty()
                     ? "classes!" + classFile.entryName
                     : classFile.rootName + "!" + classFile.entryName;
             Path taskOutputDir = classFile.rootName.isEmpty() ? outputDir : outputDir.resolve(classFile.rootName);
-            tasks.add(new DecompileTask(displayName, taskOutputDir, classFile.entryName,
+            addTask(new DecompileTask(displayName, taskOutputDir, classFile.entryName,
                     classFile.path.toAbsolutePath().normalize().toString(),
                     new DirectoryInputSource(classFile.path, classFile.entryName, directoryFingerprint),
                     readOuterEntry(classFile.path, classFile.entryName)));
         }
 
-        for (Path archive : archives) {
+        scanTopLevelArchives(inputDir, outputDir, archives);
+    }
+
+    private void scanTopLevelArchives(Path inputDir, Path outputDir, List<Path> archives)
+            throws IOException, InterruptedException {
+        if (archives.isEmpty()) {
+            return;
+        }
+        if (archives.size() == 1) {
+            Path archive = archives.get(0);
             String displayName = ArchiveNames.normalizeZipName(inputDir.relativize(archive).toString());
             processArchive(archive, outputDir, displayName,
-                    archive.toAbsolutePath().normalize().toString(), tasks, 0,
-                    archiveFingerprint(archive));
+                    archive.toAbsolutePath().normalize().toString(), 0,
+                    archiveFingerprint(archive), true);
+            return;
+        }
+
+        int threads = Math.max(1, Math.min(options.threads, archives.size()));
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            List<Callable<Void>> jobs = new ArrayList<Callable<Void>>(archives.size());
+            for (final Path archive : archives) {
+                final String displayName = ArchiveNames.normalizeZipName(
+                        inputDir.relativize(archive).toString());
+                final String sourceLabel = archive.toAbsolutePath().normalize().toString();
+                final String fingerprint = archiveFingerprint(archive);
+                jobs.add(new Callable<Void>() {
+                    @Override
+                    public Void call() throws Exception {
+                        processArchive(archive, outputDir, displayName, sourceLabel, 0, fingerprint, true);
+                        return null;
+                    }
+                });
+            }
+            List<Future<Void>> futures = pool.invokeAll(jobs);
+            unwrapScanFutures(futures);
+        } finally {
+            pool.shutdownNow();
         }
     }
 
-    private void processArchive(Path archive, Path outputBase, String displayName,
-                                String sourceArchiveLabel, List<DecompileTask> tasks, int depth,
-                                String archiveFingerprint)
-            throws IOException, InterruptedException {
-        String ext = ArchiveNames.extension(archive.toString());
-        if (".war".equals(ext)) {
-            processWar(archive, outputBase.resolve(ArchiveNames.stripExtension(displayName)),
-                    sourceArchiveLabel, tasks, depth, archiveFingerprint);
-        } else if (".jar".equals(ext)) {
-            processJar(archive, outputBase.resolve(ArchiveNames.stripExtension(displayName)),
-                    displayName, sourceArchiveLabel, tasks, depth, archiveFingerprint);
-        } else {
-            throw new IOException("Unsupported input type: " + archive);
+    private void unwrapScanFutures(List<Future<Void>> futures) throws IOException, InterruptedException {
+        for (Future<Void> future : futures) {
+            try {
+                future.get();
+            } catch (InterruptedException e) {
+                throw e;
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof IOException) throw (IOException) cause;
+                if (cause instanceof InterruptedException) throw (InterruptedException) cause;
+                if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                if (cause instanceof Error) throw (Error) cause;
+                throw new IOException("Top-level archive scan failed", cause);
+            }
         }
     }
 
-    private void processJar(Path jarFile, Path outputDir, String displayName,
-                            String sourceArchiveLabel, List<DecompileTask> tasks, int depth,
-                            String archiveFingerprint)
+    private int processArchive(Path archive, Path outputBase, String displayName,
+                               String sourceArchiveLabel, int depth, String archiveFingerprint,
+                               boolean processNested)
             throws IOException, InterruptedException {
-        try (ZipFile zip = new ZipFile(jarFile.toFile())) {
+        return processArchive(archive, outputBase, displayName, sourceArchiveLabel, depth,
+                archiveFingerprint, processNested, Collections.<String>emptySet());
+    }
+
+    private int processArchive(Path archive, Path outputBase, String displayName,
+                               String sourceArchiveLabel, int depth, String archiveFingerprint,
+                               boolean processNested, Set<String> skipNestedEntries)
+            throws IOException, InterruptedException {
+        Path outputDir = outputBase.resolve(ArchiveNames.stripExtension(displayName));
+        return scanDiskArchive(archive, outputDir, displayName, sourceArchiveLabel, depth,
+                archiveFingerprint, processNested, kindOf(archive.toString()), skipNestedEntries);
+    }
+
+    private int scanDiskArchive(Path archive, Path outputDir, String displayName,
+                                String sourceArchiveLabel, int depth, String archiveFingerprint,
+                                boolean processNested, ArchiveKind kind,
+                                Set<String> skipNestedEntries)
+            throws IOException, InterruptedException {
+        final ZipFile zip;
+        try {
+            zip = new ZipFile(archive.toFile());
+        } catch (IOException openEx) {
+            warnSkipArchive(sourceArchiveLabel, displayName, openEx);
+            return 0;
+        }
+        int added = 0;
+        try {
             Enumeration<? extends ZipEntry> entries = zip.entries();
             while (entries.hasMoreElements()) {
+                checkInterrupted();
                 ZipEntry entry = entries.nextElement();
-                recordArchiveEntry(displayName);
+                if (entry.isDirectory()) {
+                    continue;
+                }
                 String entryName = ArchiveNames.requireSafeJarEntryName(entry.getName(), displayName);
-                if (entry.isDirectory()) {
+                if (processNested && options.processNestedArchives && ArchiveNames.isNestedArchive(entryName)) {
+                    if (!skipNestedEntries.contains(entryName)) {
+                        handleNested(zip, entry, entryName, outputDir, kind, sourceArchiveLabel,
+                                archiveFingerprint, depth);
+                    }
                     continue;
                 }
-                if (ArchiveNames.isNestedArchive(entryName)) {
-                    if (!options.processNestedArchives) continue;
-                    Path nested = extractNested(zip, entry, depth + 1, sourceArchiveLabel);
-                    processArchive(nested, outputDir.resolve("nested"), ArchiveNames.safeArchiveOutputName(entryName),
-                            sourceArchiveLabel + "!" + entryName, tasks, depth + 1,
-                            nestedFingerprint(archiveFingerprint, entry));
+                if (!matchesArchiveClass(kind, entryName)) {
                     continue;
                 }
-
-                String mapped = ArchiveNames.mapJarClassEntry(entryName);
-                if (!matcher.matchesClassEntry(mapped)) {
-                    continue;
-                }
-                tasks.add(new DecompileTask(displayName + "!" + mapped, outputDir, mapped,
-                        sourceArchiveLabel + "!" + DecompileUtils.toClassName(mapped),
-                        new ZipInputSource(jarFile, entryName, entry.getCrc(), entry.getSize(),
-                                archiveFingerprint),
-                        readOuterEntry(zip, entry, mapped, displayName)));
+                addZipClassTask(kind, zip, entry, entryName, archive, outputDir, displayName,
+                        sourceArchiveLabel, archiveFingerprint);
+                added++;
             }
+        } finally {
+            zip.close();
+        }
+        return added;
+    }
+
+    private void handleNested(ZipFile outer, ZipEntry entry, String entryName, Path parentOutputDir,
+                              ArchiveKind parentKind, String sourceArchiveLabel,
+                              String parentFingerprint, int parentDepth)
+            throws IOException, InterruptedException {
+        int depth = parentDepth + 1;
+        if (depth > ArchiveLimits.MAX_NESTED_DEPTH) {
+            throw new IOException("Nested archive depth exceeds " + ArchiveLimits.MAX_NESTED_DEPTH
+                    + " in " + sourceArchiveLabel + "!" + entry.getName());
+        }
+        recordNestedArchive(sourceArchiveLabel + "!" + entry.getName());
+
+        ArchiveKind nestedKind = kindOf(entryName);
+        String nestedSource = sourceArchiveLabel + "!" + entryName;
+        String nestedFingerprintValue = nestedFingerprint(parentFingerprint, entry);
+        Path nestedOutputBase = nestedOutputBase(parentKind, parentOutputDir, entryName);
+        String nestedDisplayName = nestedDisplayName(parentKind, entryName);
+        Path nestedArchiveOutputDir = nestedOutputBase.resolve(ArchiveNames.stripExtension(nestedDisplayName));
+
+        List<NestedPreviewCopy> previewCopies = new ArrayList<NestedPreviewCopy>();
+        NestedPreview preview;
+        try {
+            preview = previewNested(outer, entry, nestedKind, nestedSource, nestedFingerprintValue,
+                    nestedArchiveOutputDir, depth, previewCopies);
+        } catch (IOException previewError) {
+            revertPreviewCopyCounts(previewCopies);
+            deletePreviewCopies(previewCopies);
+            fallbackExtractNested(outer, entry, nestedOutputBase, nestedDisplayName, nestedSource,
+                    sourceArchiveLabel, depth, nestedFingerprintValue, previewError);
+            return;
+        }
+        if (!preview.sawFileEntry) {
+            revertPreviewCopyCounts(previewCopies);
+            deletePreviewCopies(previewCopies);
+            fallbackExtractNested(outer, entry, nestedOutputBase, nestedDisplayName, nestedSource,
+                    sourceArchiveLabel, depth, nestedFingerprintValue, null);
+            return;
+        }
+
+        Set<String> previewedNested = new HashSet<String>();
+        for (NestedPreviewCopy copy : previewCopies) {
+            previewedNested.add(copy.entryName);
+            int added = processArchive(copy.path, copy.outputBase, copy.displayName, copy.sourceLabel,
+                    copy.depth, copy.fingerprint, true);
+            if (added == 0) {
+                deleteExtractedArchive(copy.path);
+            }
+        }
+        if (preview.hasMatch) {
+            Path extracted = extractNested(outer, entry, depth, sourceArchiveLabel);
+            processArchive(extracted, nestedOutputBase, nestedDisplayName, nestedSource, depth,
+                    nestedFingerprintValue, true, previewedNested);
         }
     }
 
-    private void processWar(Path warFile, Path outputDir, String sourceArchiveLabel,
-                            List<DecompileTask> tasks, int depth, String archiveFingerprint)
+    private NestedPreview previewNested(ZipFile outer, ZipEntry entry, ArchiveKind nestedKind,
+                                        String nestedSource, String nestedFingerprint,
+                                        Path nestedArchiveOutputDir, int depth,
+                                        List<NestedPreviewCopy> previewCopies)
             throws IOException, InterruptedException {
-        try (ZipFile zip = new ZipFile(warFile.toFile())) {
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                recordArchiveEntry(warFile.toString());
-                String name = ArchiveNames.requireSafeJarEntryName(entry.getName(), warFile.toString());
-                if (entry.isDirectory()) {
+        NestedPreview preview = new NestedPreview();
+        try (InputStream raw = outer.getInputStream(entry);
+             ZipInputStream zis = new ZipInputStream(raw)) {
+            ZipEntry child;
+            while ((child = zis.getNextEntry()) != null) {
+                checkInterrupted();
+                if (child.isDirectory()) {
                     continue;
                 }
-
-                if (name.startsWith(ArchiveNames.WEB_LIB) && name.toLowerCase().endsWith(".jar")) {
-                    if (!options.processNestedArchives) continue;
-                    Path libJar = extractNested(zip, entry, depth + 1, sourceArchiveLabel);
-                    String libName = ArchiveNames.safeFileName(name.substring(ArchiveNames.WEB_LIB.length()));
-                    Path libOutput = outputDir.resolve("WEB-INF").resolve("lib")
-                            .resolve(ArchiveNames.stripExtension(libName));
-                    processJar(libJar, libOutput, libName, sourceArchiveLabel + "!" + name,
-                            tasks, depth + 1, nestedFingerprint(archiveFingerprint, entry));
+                preview.sawFileEntry = true;
+                String childName = ArchiveNames.requireSafeJarEntryName(child.getName(), nestedSource);
+                if (options.processNestedArchives && ArchiveNames.isNestedArchive(childName)) {
+                    Path copy = writeNestedArchive(zis, child.getName(), child.getSize(), depth + 1,
+                            nestedSource + "!" + childName);
+                    String childSource = nestedSource + "!" + childName;
+                    try {
+                        recordNestedArchive(childSource);
+                    } catch (IOException e) {
+                        deleteExtractedArchive(copy);
+                        throw e;
+                    }
+                    previewCopies.add(new NestedPreviewCopy(copy, childName,
+                            nestedOutputBase(nestedKind, nestedArchiveOutputDir, childName),
+                            nestedDisplayName(nestedKind, childName),
+                            childSource,
+                            nestedFingerprint(nestedFingerprint, child),
+                            depth + 1));
                     continue;
                 }
-
-                if (ArchiveNames.isNestedArchive(name)) {
-                    if (!options.processNestedArchives) continue;
-                    Path nested = extractNested(zip, entry, depth + 1, sourceArchiveLabel);
-                    processArchive(nested, outputDir.resolve("nested"), ArchiveNames.safeArchiveOutputName(name),
-                            sourceArchiveLabel + "!" + name, tasks, depth + 1,
-                            nestedFingerprint(archiveFingerprint, entry));
-                    continue;
+                if (matchesArchiveClass(nestedKind, childName)) {
+                    preview.hasMatch = true;
                 }
-
-                String normalized = ArchiveNames.normalizeZipName(name);
-                if (!normalized.startsWith(ArchiveNames.WEB_CLASSES)) {
-                    continue;
-                }
-
-                String mapped = normalized.substring(ArchiveNames.WEB_CLASSES.length());
-                if (!matcher.matchesClassEntry(mapped)) {
-                    continue;
-                }
-
-                tasks.add(new DecompileTask("WEB-INF/classes!" + mapped,
-                        outputDir.resolve("WEB-INF").resolve("classes"), mapped,
-                        sourceArchiveLabel + "!" + DecompileUtils.toClassName(mapped),
-                        new ZipInputSource(warFile, name, entry.getCrc(), entry.getSize(),
-                                archiveFingerprint),
-                        readOuterEntry(zip, entry, mapped, warFile.toString())));
             }
+        }
+        return preview;
+    }
+
+    private void fallbackExtractNested(ZipFile outer, ZipEntry entry, Path nestedOutputBase,
+                                       String nestedDisplayName, String nestedSource,
+                                       String sourceArchiveLabel, int depth,
+                                       String nestedFingerprint, IOException previewError)
+            throws IOException, InterruptedException {
+        if (options.debug) {
+            String reason = previewError == null
+                    ? "stream preview found no file entries"
+                    : previewError.getMessage();
+            System.err.println("[debug] nested stream preview failed, extracting: "
+                    + nestedSource + ": " + reason);
+        }
+        Path extracted = extractNested(outer, entry, depth, sourceArchiveLabel);
+        int added = processArchive(extracted, nestedOutputBase, nestedDisplayName, nestedSource, depth,
+                nestedFingerprint, true);
+        if (added == 0) {
+            deleteExtractedArchive(extracted);
+        }
+    }
+
+    private Path nestedOutputBase(ArchiveKind parentKind, Path parentOutputDir, String entryName) {
+        if (parentKind == ArchiveKind.WAR
+                && entryName.startsWith(ArchiveNames.WEB_LIB)
+                && entryName.toLowerCase(Locale.ROOT).endsWith(".jar")) {
+            return parentOutputDir.resolve("WEB-INF").resolve("lib");
+        }
+        return parentOutputDir.resolve("nested");
+    }
+
+    private String nestedDisplayName(ArchiveKind parentKind, String entryName) {
+        if (parentKind == ArchiveKind.WAR
+                && entryName.startsWith(ArchiveNames.WEB_LIB)
+                && entryName.toLowerCase(Locale.ROOT).endsWith(".jar")) {
+            return ArchiveNames.safeFileName(entryName.substring(ArchiveNames.WEB_LIB.length()));
+        }
+        return ArchiveNames.safeArchiveOutputName(entryName);
+    }
+
+    private boolean matchesArchiveClass(ArchiveKind kind, String entryName) {
+        String mapped = mappedClassEntry(kind, entryName);
+        return mapped != null && matcher.matchesClassEntry(mapped);
+    }
+
+    private String mappedClassEntry(ArchiveKind kind, String entryName) {
+        if (kind == ArchiveKind.WAR) {
+            if (!entryName.startsWith(ArchiveNames.WEB_CLASSES)) {
+                return null;
+            }
+            return entryName.substring(ArchiveNames.WEB_CLASSES.length());
+        }
+        return ArchiveNames.mapJarClassEntry(entryName);
+    }
+
+    private void addZipClassTask(ArchiveKind kind, ZipFile zip, ZipEntry entry, String entryName,
+                                 Path archive, Path outputDir, String displayName,
+                                 String sourceArchiveLabel, String archiveFingerprint)
+            throws IOException {
+        if (kind == ArchiveKind.WAR) {
+            String mapped = entryName.substring(ArchiveNames.WEB_CLASSES.length());
+            addTask(new DecompileTask("WEB-INF/classes!" + mapped,
+                    outputDir.resolve("WEB-INF").resolve("classes"), mapped,
+                    sourceArchiveLabel + "!" + DecompileUtils.toClassName(mapped),
+                    new ZipInputSource(archive, entryName, entry.getCrc(), entry.getSize(),
+                            archiveFingerprint),
+                    readOuterEntry(zip, entry, mapped, sourceArchiveLabel)));
+            return;
+        }
+        String mapped = ArchiveNames.mapJarClassEntry(entryName);
+        addTask(new DecompileTask(displayName + "!" + mapped, outputDir, mapped,
+                sourceArchiveLabel + "!" + DecompileUtils.toClassName(mapped),
+                new ZipInputSource(archive, entryName, entry.getCrc(), entry.getSize(),
+                        archiveFingerprint),
+                readOuterEntry(zip, entry, mapped, displayName)));
+    }
+
+    private void addTask(DecompileTask task) throws IOException {
+        long count = matchedTargetClasses.incrementAndGet();
+        if (count > ArchiveLimits.MAX_TARGET_CLASSES) {
+            throw new IOException("Target class count exceeds " + ArchiveLimits.MAX_TARGET_CLASSES
+                    + " while scanning " + task.sourceLocation);
+        }
+        collected.add(task);
+    }
+
+    private synchronized void warnSkipArchive(String sourceArchiveLabel, String displayName,
+                                              IOException error) {
+        System.err.println("[warn] Skipping unreadable archive: " + sourceArchiveLabel
+                + " (" + displayName + "): " + error.getMessage());
+        if (options.debug) {
+            error.printStackTrace(System.err);
         }
     }
 
     private Path extractNested(ZipFile zip, ZipEntry entry, int depth, String source) throws IOException {
+        try (InputStream in = zip.getInputStream(entry)) {
+            return writeNestedArchive(in, entry.getName(), entry.getSize(), depth,
+                    source + "!" + entry.getName());
+        }
+    }
+
+    private Path writeNestedArchive(InputStream in, String entryName, long size, int depth, String source)
+            throws IOException {
         if (depth > ArchiveLimits.MAX_NESTED_DEPTH) {
             throw new IOException("Nested archive depth exceeds " + ArchiveLimits.MAX_NESTED_DEPTH
-                    + " in " + source + "!" + entry.getName());
+                    + " in " + source);
         }
-        if (++nestedArchiveCount > ArchiveLimits.MAX_NESTED_ARCHIVES) {
+        synchronized (extractLock) {
+            long remainingBudget = ArchiveLimits.MAX_NESTED_EXTRACTED_BYTES - nestedExtractedBytes.get();
+            if (size >= 0L && size > remainingBudget) {
+                throw new IOException("Nested archive extraction budget exceeded in " + source);
+            }
+            Path target = tempRoot.resolve("nested")
+                    .resolve(nestedSeq.incrementAndGet() + "-" + ArchiveNames.safeArchiveOutputName(entryName));
+            Files.createDirectories(target.getParent());
+            try {
+                OutputStream out = Files.newOutputStream(target);
+                long copied;
+                try {
+                    copied = ArchiveLimits.copyLimited(in, out, remainingBudget, source);
+                } finally {
+                    out.close();
+                }
+                nestedExtractedBytes.addAndGet(copied);
+                return target;
+            } catch (IOException e) {
+                try {
+                    Files.deleteIfExists(target);
+                } catch (IOException cleanup) {
+                    e.addSuppressed(cleanup);
+                }
+                throw e;
+            }
+        }
+    }
+
+    private void recordNestedArchive(String source) throws IOException {
+        int count = nestedArchiveCount.incrementAndGet();
+        if (count > ArchiveLimits.MAX_NESTED_ARCHIVES) {
+            nestedArchiveCount.decrementAndGet();
             throw new IOException("Nested archive count exceeds "
                     + ArchiveLimits.MAX_NESTED_ARCHIVES + " in " + source);
         }
-        long remainingBudget = ArchiveLimits.MAX_NESTED_EXTRACTED_BYTES - nestedExtractedBytes;
-        if (entry.getSize() >= 0L && entry.getSize() > remainingBudget) {
-            throw new IOException("Nested archive extraction budget exceeded in "
-                    + source + "!" + entry.getName());
-        }
-        String fileName = ArchiveNames.safeArchiveOutputName(entry.getName());
-        Path target = tempRoot.resolve("nested").resolve(nestedSeq.incrementAndGet() + "-" + fileName);
-        Files.createDirectories(target.getParent());
-        try (InputStream in = zip.getInputStream(entry);
-             OutputStream out = Files.newOutputStream(target)) {
-            nestedExtractedBytes += ArchiveLimits.copyLimited(in, out, remainingBudget,
-                    source + "!" + entry.getName());
-        } catch (IOException e) {
-            try {
-                Files.deleteIfExists(target);
-            } catch (IOException cleanup) {
-                e.addSuppressed(cleanup);
-            }
-            throw e;
-        }
-        return target;
     }
 
-    private void recordArchiveEntry(String source) throws IOException {
-        scannedArchiveEntries++;
-        if (scannedArchiveEntries > ArchiveLimits.MAX_ARCHIVE_ENTRIES) {
-            throw new IOException("Archive entry count exceeds "
-                    + ArchiveLimits.MAX_ARCHIVE_ENTRIES + " while scanning " + source);
+    private void revertPreviewCopyCounts(List<NestedPreviewCopy> copies) {
+        for (int i = 0; i < copies.size(); i++) {
+            nestedArchiveCount.decrementAndGet();
+        }
+    }
+
+    private void deletePreviewCopies(List<NestedPreviewCopy> copies) {
+        for (NestedPreviewCopy copy : copies) {
+            deleteExtractedArchive(copy.path);
+        }
+        copies.clear();
+    }
+
+    private void deleteExtractedArchive(Path path) {
+        if (path == null) {
+            return;
+        }
+        synchronized (extractLock) {
+            long size = 0L;
+            try {
+                if (Files.isRegularFile(path)) {
+                    size = Files.size(path);
+                }
+            } catch (IOException ignored) {
+            }
+            boolean deleted;
+            try {
+                deleted = Files.deleteIfExists(path);
+            } catch (IOException ignored) {
+                return;
+            }
+            if (!deleted || size <= 0L) {
+                return;
+            }
+            final long released = size;
+            nestedExtractedBytes.updateAndGet(new LongUnaryOperator() {
+                @Override
+                public long applyAsLong(long current) {
+                    return current <= released ? 0L : current - released;
+                }
+            });
+        }
+    }
+
+    long extractedNestedBytes() {
+        return nestedExtractedBytes.get();
+    }
+
+    private void checkInterrupted() throws InterruptedException {
+        if (Thread.interrupted()) {
+            throw new InterruptedException("Archive scan interrupted");
         }
     }
 
@@ -434,7 +705,7 @@ final class SelectiveDecompilerTaskCollector {
         }
     }
 
-    private void debugMetadataFailure(String source, IOException e) {
+    private synchronized void debugMetadataFailure(String source, IOException e) {
         if (options.debug) {
             System.err.println("[debug] failed to read inner-class metadata: " + source
                     + ": " + e.getMessage());
@@ -443,5 +714,40 @@ final class SelectiveDecompilerTaskCollector {
 
     private boolean isUnderOutput(Path path) {
         return path.toAbsolutePath().normalize().startsWith(options.output);
+    }
+
+    private static ArchiveKind kindOf(String name) {
+        return ".war".equals(ArchiveNames.extension(name)) ? ArchiveKind.WAR : ArchiveKind.JAR;
+    }
+
+    private enum ArchiveKind {
+        JAR,
+        WAR
+    }
+
+    private static final class NestedPreview {
+        boolean hasMatch;
+        boolean sawFileEntry;
+    }
+
+    private static final class NestedPreviewCopy {
+        final Path path;
+        final String entryName;
+        final Path outputBase;
+        final String displayName;
+        final String sourceLabel;
+        final String fingerprint;
+        final int depth;
+
+        NestedPreviewCopy(Path path, String entryName, Path outputBase, String displayName,
+                          String sourceLabel, String fingerprint, int depth) {
+            this.path = path;
+            this.entryName = entryName;
+            this.outputBase = outputBase;
+            this.displayName = displayName;
+            this.sourceLabel = sourceLabel;
+            this.fingerprint = fingerprint;
+            this.depth = depth;
+        }
     }
 }

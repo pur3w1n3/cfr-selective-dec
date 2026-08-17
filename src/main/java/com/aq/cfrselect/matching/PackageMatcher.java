@@ -5,26 +5,25 @@ import com.aq.cfrselect.model.ClassFileMatch;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 public final class PackageMatcher {
     private final List<String> prefixes;
     private final boolean matchesAll;
 
     public PackageMatcher(List<String> packages) {
-        this.prefixes = packages.stream()
-                .map(PackageMatcher::normalizePackage)
-                .filter(new java.util.function.Predicate<String>() {
-                    @Override
-                    public boolean test(String s) {
-                        return s != null && !s.trim().isEmpty();
-                    }
-                })
-                .distinct()
-                .collect(Collectors.toList());
-        this.matchesAll = this.prefixes.isEmpty();
+        List<String> normalized = new ArrayList<String>();
+        for (String packageName : packages) {
+            String prefix = normalizePackage(packageName);
+            if (prefix.isEmpty() || normalized.contains(prefix)) {
+                continue;
+            }
+            normalized.add(prefix);
+        }
+        this.prefixes = normalized;
+        this.matchesAll = normalized.isEmpty();
     }
 
     public boolean matchesClassEntry(String entryName) {

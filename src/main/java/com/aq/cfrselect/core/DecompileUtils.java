@@ -1,9 +1,5 @@
 package com.aq.cfrselect.core;
 
-/**
- * Shared utility methods for decompilation tasks.
- * Eliminates duplicate implementations across multiple classes.
- */
 final class DecompileUtils {
     private DecompileUtils() {
     }

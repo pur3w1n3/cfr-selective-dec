@@ -1,5 +1,7 @@
 package com.aq.cfrselect.core;
 
+import com.aq.cfrselect.archive.ArchiveNames;
+
 import java.io.IOException;
 import java.nio.file.Path;
 
@@ -12,18 +14,6 @@ final class ZipInputSource implements InputSource {
     // Prefix stripped by mapJarClassEntry (e.g. "BOOT-INF/classes/"), empty if none
     final String entryPrefix;
 
-    ZipInputSource(Path archive, String entryName) {
-        this(archive, entryName, -1L, -1L,
-                archive.toAbsolutePath().normalize() + "|"
-                        + archive.toFile().length() + "|" + archive.toFile().lastModified());
-    }
-
-    ZipInputSource(Path archive, String entryName, long crc, long size) {
-        this(archive, entryName, crc, size,
-                archive.toAbsolutePath().normalize() + "|"
-                        + archive.toFile().length() + "|" + archive.toFile().lastModified());
-    }
-
     ZipInputSource(Path archive, String entryName, long crc, long size,
                    String containerFingerprint) {
         this.archive = archive.toAbsolutePath().normalize();
@@ -35,8 +25,8 @@ final class ZipInputSource implements InputSource {
     }
 
     private static String entryPrefix(String entryName) {
-        if (entryName.startsWith("BOOT-INF/classes/")) return "BOOT-INF/classes/";
-        if (entryName.startsWith("WEB-INF/classes/")) return "WEB-INF/classes/";
+        if (entryName.startsWith(ArchiveNames.BOOT_CLASSES)) return ArchiveNames.BOOT_CLASSES;
+        if (entryName.startsWith(ArchiveNames.WEB_CLASSES)) return ArchiveNames.WEB_CLASSES;
         return "";
     }
 

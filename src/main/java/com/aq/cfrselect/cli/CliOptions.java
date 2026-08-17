@@ -87,7 +87,7 @@ public final class CliOptions {
             } else if (arg.startsWith("-")) {
                 throw new UsageException("Unknown option: " + arg);
             } else {
-                packages.addAll(parsePackages(new String[] { arg }));
+                packages.addAll(parsePackages(arg));
             }
         }
         return validate(new CliOptions(input, output, packages, outputEncoding, keepTemp, debug,
@@ -117,7 +117,7 @@ public final class CliOptions {
                     break;
                 case "-p":
                 case "--packages":
-                    packages.addAll(parsePackages(new String[] { nextValue(args, ++i, arg) }));
+                    packages.addAll(parsePackages(nextValue(args, ++i, arg)));
                     break;
                 case "--output-encoding":
                 case "--outputencoding":
@@ -191,14 +191,12 @@ public final class CliOptions {
         }
     }
 
-    private static List<String> parsePackages(String[] values) {
+    private static List<String> parsePackages(String value) {
         List<String> result = new ArrayList<>();
-        for (String value : values) {
-            for (String part : value.split("[,;]")) {
-                String trimmed = part.trim();
-                if (!trimmed.isEmpty()) {
-                    result.add(trimmed);
-                }
+        for (String part : value.split("[,;]")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
             }
         }
         return result;

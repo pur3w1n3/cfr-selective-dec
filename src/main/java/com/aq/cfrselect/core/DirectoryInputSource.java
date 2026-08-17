@@ -9,10 +9,6 @@ final class DirectoryInputSource implements InputSource {
     private final Path classPathRoot;
     private final String containerFingerprint;
 
-    DirectoryInputSource(Path path, String entryName) {
-        this(path, entryName, null);
-    }
-
     DirectoryInputSource(Path path, String entryName, String containerFingerprint) {
         this.path = path.toAbsolutePath().normalize();
         Path root = this.path;

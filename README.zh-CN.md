@@ -13,7 +13,8 @@
   - `WEB-INF/lib/*.jar`
   - `BOOT-INF/classes`
   - `BOOT-INF/lib/*.jar`
-- 支持递归提取并处理嵌套 `.jar` 和 `.war`，也可通过 `--no-nested` 跳过。
+- 支持递归处理嵌套 `.jar` 和 `.war`：先流式预扫，仅提取包含匹配 class 的包；也可通过 `--no-nested` 跳过。
+- 无法用 JDK `ZipFile` 打开的归档（例如 ZIP64 CEN 异常的 jar）会输出 `[warn]` 并跳过，不中断整体扫描。
 - 同一来源内按顶层 Java 源文件聚合 class，每组最多 `128` 个源码单元提交给 CFR；不同归档不会混入同一批次。
 - 只有来源 class、CFR 版本和输出参数指纹一致时，已有 `.java` 才会作为缓存命中。
 - 未生成产物的批次会直接拆成单个源码单元重试，仍无产物时记录为失败。
@@ -23,7 +24,7 @@
 
 ### 性能优化（1.0.5+）
 
-- **可配置线程数** - `--threads <n>` 控制队列并发，默认不超过 `min(4, CPUs)`。
+- **可配置线程数** - `--threads <n>` 同时用于顶层归档扫描和队列并发，默认不超过 `min(4, CPUs)`。
 - **来源隔离** - 不同 JAR、WAR 或 class 根目录使用独立批次和 classpath，避免同名类串包。
 - **源码单元聚合** - 根据 `InnerClasses`/`EnclosingMethod` 属性聚合内部类，顶层 `$` 类不会被误合并。
 - **单次归档准备** - 每个来源只打开一次归档并准备待处理 class，重试复用同一工作区。
@@ -35,10 +36,10 @@
 
 ### 性能优化（1.0.4+）
 
-- **单次目录遍历** — 将 `processDirectory()` 中的两次 `Files.walk()` 合并为单次遍历。
-- **32 KB IO 缓冲区** — 流拷贝缓冲区从 8 KB 提升至 32 KB。
-- **流式递归删除** — `Files.walkFileTree()` 替代全路径收集后删除。
-- **进度报告** — 每轮队列输出 `progress=已完成/总数 百分比%`。
+- **单次目录遍历** - 将 `processDirectory()` 中的两次 `Files.walk()` 合并为单次遍历。
+- **32 KB IO 缓冲区** - 流拷贝缓冲区从 8 KB 提升至 32 KB。
+- **流式递归删除** - `Files.walkFileTree()` 替代全路径收集后删除。
+- **进度报告** - 每轮队列输出 `progress=已完成/总数 百分比%`。
 
 ## 环境要求
 
@@ -54,29 +55,30 @@ mvn clean package
 构建产物：
 
 ```text
-target/cfr-selective-dec.jar
+target/cfr-selective-dec-1.0.7.jar
+target/cfr-selective-dec-1.0.7-with-dependencies.jar
 ```
 
-`cfr-selective-dec.jar` 是包含 CFR 的完整可运行 jar。
+`cfr-selective-dec-1.0.7.jar` 为不包含依赖的薄 jar；`cfr-selective-dec-1.0.7-with-dependencies.jar` 为包含 CFR 的完整可运行 jar。
 
 ## 快速开始
 
 反编译 WAR，并只保留 `com.example` 包下的 class：
 
 ```bash
-java -jar target/cfr-selective-dec.jar --input app.war --output out --packages com.example
+java -jar target/cfr-selective-dec-1.0.7-with-dependencies.jar --input app.war --output out --packages com.example
 ```
 
 反编译目录树中的全部 class：
 
 ```bash
-java -jar target/cfr-selective-dec.jar --input ./build-output --output out
+java -jar target/cfr-selective-dec-1.0.7-with-dependencies.jar --input ./build-output --output out
 ```
 
 反编译多个包名前缀：
 
 ```bash
-java -jar target/cfr-selective-dec.jar --input app.jar --output out --packages com.foo,org.demo
+java -jar target/cfr-selective-dec-1.0.7-with-dependencies.jar --input app.jar --output out --packages com.foo,org.demo
 ```
 
 ## 使用方法
@@ -84,13 +86,13 @@ java -jar target/cfr-selective-dec.jar --input app.jar --output out --packages c
 命名参数：
 
 ```text
-java -jar cfr-selective-dec.jar --input <path> --output <dir> [--packages <prefixes>] [options]
+java -jar cfr-selective-dec-<version>-with-dependencies.jar --input <path> --output <dir> [--packages <prefixes>] [options]
 ```
 
 位置参数：
 
 ```text
-java -jar cfr-selective-dec.jar <input.jar|input.war|input-dir> <output-dir> [package-prefixes...] [options]
+java -jar cfr-selective-dec-<version>-with-dependencies.jar <input.jar|input.war|input-dir> <output-dir> [package-prefixes...] [options]
 ```
 
 ### 参数
@@ -101,9 +103,9 @@ java -jar cfr-selective-dec.jar <input.jar|input.war|input-dir> <output-dir> [pa
 | `-o, --output <dir>` | 生成 `.java` 文件、`summary.txt` 和 `manifest.txt` 的输出目录。 |
 | `-p, --packages <prefixes>` | 可选包名前缀。多个前缀可用逗号或分号分隔。 |
 | `--output-encoding <charset>` | `.java` 文件输出编码。默认：`UTF-8`。 |
-| `--threads <n>` | 工作线程数。默认：`min(4, CPUs)`。 |
+| `--threads <n>` | 顶层归档扫描和反编译共用的工作线程数。默认：`min(4, CPUs)`。 |
 | `--no-nested` | 跳过嵌套 JAR/WAR，可显著加快只关注主应用 class 的扫描。 |
-| `--keep-temp` | 保留临时提取的嵌套归档，便于排查问题。 |
+| `--keep-temp` | 保留实际提取出的嵌套归档，便于排查问题。 |
 | `--debug` | 输出完整异常堆栈和调试日志。 |
 | `-h, --help` | 显示命令帮助。 |
 
@@ -121,7 +123,7 @@ com/foo
 使用位置参数时，也可以用空格分隔多个包名前缀：
 
 ```bash
-java -jar target/cfr-selective-dec.jar app.jar out com.foo org.bar
+java -jar target/cfr-selective-dec-1.0.7-with-dependencies.jar app.jar out com.foo org.bar
 ```
 
 如果没有提供 `--packages` 或位置参数包名前缀，则默认反编译所有匹配到的 `.class` 文件。
@@ -131,7 +133,7 @@ java -jar target/cfr-selective-dec.jar app.jar out com.foo org.bar
 如果审计项目需要非 UTF-8 源码编码，可以使用 `--output-encoding`：
 
 ```bash
-java -jar target/cfr-selective-dec.jar app.jar out com.example --output-encoding GB18030
+java -jar target/cfr-selective-dec-1.0.7-with-dependencies.jar app.jar out com.example --output-encoding GB18030
 ```
 
 ### 调试
@@ -139,19 +141,19 @@ java -jar target/cfr-selective-dec.jar app.jar out com.example --output-encoding
 使用 `--debug` 输出完整异常堆栈和内部调试信息：
 
 ```bash
-java -jar target/cfr-selective-dec.jar --input app.war --output out --debug
+java -jar target/cfr-selective-dec-1.0.7-with-dependencies.jar --input app.war --output out --debug
 ```
 
-需要检查临时提取的嵌套归档时，可以使用 `--keep-temp`：
+需要检查实际提取出的嵌套归档时，可以使用 `--keep-temp`：
 
 ```bash
-java -jar target/cfr-selective-dec.jar --input app.war --output out --keep-temp
+java -jar target/cfr-selective-dec-1.0.7-with-dependencies.jar --input app.war --output out --keep-temp
 ```
 
 ## 工作方式
 
-1. 扫描输入路径中的 `.class`、`.jar` 和 `.war` 文件。
-2. 规范化 `WEB-INF/classes`、`BOOT-INF/classes` 等归档布局。
+1. 扫描输入路径中的 `.class`、`.jar` 和 `.war` 文件；目录中的顶层归档按 `--threads` 并行扫描。
+2. 规范化 `WEB-INF/classes`、`BOOT-INF/classes` 等归档布局；嵌套归档先流式预扫，仅提取包含匹配 class 的包。
 3. 按包名前缀筛选 class entry。
 4. 按来源归档或 class 根目录隔离任务，并将内部类聚合到顶层源码单元。
 5. 每个归档只打开一次，准备该来源待处理 class 的独立工作区。
@@ -190,8 +192,8 @@ com.example.Main1 /path/to/com/example/Main1.class
 工具会防御性处理不可信归档：
 
 - 校验归档 entry name，拒绝绝对路径、盘符路径、空路径段、`.`、`..` 和 NUL 字符。
-- 嵌套归档会先复制到随机临时路径再处理。
-- 限制归档条目总数（100 万）、嵌套深度（16）、嵌套归档数量（10000）和累计提取大小（8 GiB）。
+- 嵌套归档先流式预扫条目名，仅将包含匹配 class 的包复制到临时路径；父包因匹配而提取后，仍用 `ZipFile` 补扫预扫未列出的嵌套包。删除未保留的提取文件时归还累计提取预算。
+- 限制待反编译目标类数量（100 万）、嵌套深度（16）、嵌套归档数量（10000，预扫时计数）和累计提取大小（8 GiB）。
 - 单个归档 class 最大允许 64 MiB，防止异常条目耗尽磁盘。
 - 生成的源码文件只会写入配置的输出目录。
 - 大文件复制使用固定大小缓冲区，不会整体读入内存。
