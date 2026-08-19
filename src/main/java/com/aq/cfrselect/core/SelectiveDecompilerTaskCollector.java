@@ -252,10 +252,10 @@ final class SelectiveDecompilerTaskCollector {
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
                 recordArchiveEntry(displayName);
-                String entryName = ArchiveNames.requireSafeJarEntryName(entry.getName(), displayName);
                 if (entry.isDirectory()) {
                     continue;
                 }
+                String entryName = ArchiveNames.requireSafeJarEntryName(entry.getName(), displayName);
                 if (ArchiveNames.isNestedArchive(entryName)) {
                     if (!options.processNestedArchives) continue;
                     Path nested = extractNested(zip, entry, depth + 1, sourceArchiveLabel);
